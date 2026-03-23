@@ -11,11 +11,19 @@ async function bootstrap(): Promise<void> {
   app.use(urlencoded({ extended: true, limit: bodyLimit }));
 
   app.enableCors({
-    origin: [
-      'http://localhost:3001',
-      'http://127.0.0.1:3001',
-      process.env.WEB_URL
-    ].filter((value): value is string => Boolean(value)),
+    origin: (origin, callback) => {
+      const allowed = [
+        'http://localhost:3001',
+        'http://127.0.0.1:3001',
+        process.env.WEB_URL
+      ].filter(Boolean);
+
+      if (!origin || allowed.includes(origin) || origin.endsWith('.vercel.app')) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     credentials: false
   });
   app.setGlobalPrefix('api/v1');
