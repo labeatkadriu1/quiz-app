@@ -1,0 +1,30 @@
+{
+  "name": "quiz-platform",
+  "description": "Multi-tenant quiz SaaS for schools and publishers",
+  "stack": "heroku-24",
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "standard-1x"
+    },
+    "worker": {
+      "quantity": 1,
+      "size": "standard-1x"
+    }
+  },
+  "addons": ["heroku-postgresql", "heroku-redis"],
+  "env": {
+    "NODE_ENV": {
+      "value": "production"
+    },
+    "JWT_ACCESS_TTL": {
+      "value": "15m"
+    },
+    "JWT_REFRESH_TTL": {
+      "value": "30d"
+    }
+  },
+  "scripts": {
+    "postdeploy": "npm run migrate -w @quiz/api"
+  }
+}

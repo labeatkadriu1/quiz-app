@@ -1,0 +1,22 @@
+{
+  "name": "quiz-platform",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @quiz/shared && npm run build -w @quiz/api && npm run build -w @quiz/web",
+    "dev": "npm run dev -w @quiz/api",
+    "dev:web": "npm run dev -w @quiz/web",
+    "lint": "npm run lint -ws --if-present",
+    "test": "npm run test -ws --if-present",
+    "db:generate": "npm run prisma:generate -w @quiz/api",
+    "db:migrate": "npm run prisma:migrate -w @quiz/api",
+    "heroku-postbuild": "npm run build -w @quiz/shared && npm run prisma:generate -w @quiz/api && npm run build -w @quiz/api"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

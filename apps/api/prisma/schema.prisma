@@ -1,0 +1,181 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum OrganizationType {
+  SCHOOL
+  PUBLISHER
+  ACADEMY
+  COMPANY
+  TRAINING_CENTER
+  MEDIA_BRAND
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
+enum MemberStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+model Organization {
+  id           String                 @id @default(uuid()) @db.Uuid
+  name         String
+  type         OrganizationType
+  status       OrganizationStatus     @default(ACTIVE)
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+  settings     OrganizationSetting?
+  subscription Subscription?
+  members      OrganizationMember[]
+  roles        Role[]
+  schools      School[]
+  invitations  Invitation[]
+  auditLogs    AuditLog[]
+
+  @@index([type])
+  @@index([status])
+}
+
+model OrganizationSetting {
+  organizationId String       @id @db.Uuid
+  settings       Json
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model Subscription {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @unique @db.Uuid
+  planCode       String
+  billingStatus  String
+  seatLimit      Int?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([billingStatus])
+}
+
+model User {
+  id                String               @id @default(uuid()) @db.Uuid
+  email             String               @unique
+  passwordHash      String
+  firstName         String?
+  lastName          String?
+  status            String               @default("ACTIVE")
+  lastLoginAt       DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  memberships       OrganizationMember[]
+  sentInvitations   Invitation[]         @relation("InvitationSender")
+  auditActions      AuditLog[]           @relation("AuditActor")
+
+  @@index([status])
+}
+
+model OrganizationMember {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  userId         String       @db.Uuid
+  roleId         String?      @db.Uuid
+  status         MemberStatus @default(INVITED)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           Role?        @relation(fields: [roleId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, userId])
+  @@index([organizationId, roleId])
+}
+
+model Role {
+  id             String               @id @default(uuid()) @db.Uuid
+  organizationId String?              @db.Uuid
+  key            String
+  name           String
+  description    String?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  organization   Organization?        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members        OrganizationMember[]
+  permissions    RolePermission[]
+  invitations    Invitation[]
+
+  @@unique([organizationId, key])
+}
+
+model RolePermission {
+  id         String   @id @default(uuid()) @db.Uuid
+  roleId     String   @db.Uuid
+  permission String
+  createdAt  DateTime @default(now())
+  role       Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permission])
+  @@index([permission])
+}
+
+model School {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  name           String
+  timezone       String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+model Invitation {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  email          String
+  roleId         String?          @db.Uuid
+  tokenHash      String           @unique
+  status         InvitationStatus @default(PENDING)
+  expiresAt      DateTime
+  invitedByUserId String?         @db.Uuid
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role           Role?            @relation(fields: [roleId], references: [id], onDelete: SetNull)
+  invitedBy      User?            @relation("InvitationSender", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, email])
+  @@index([organizationId, status])
+}
+
+model AuditLog {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  actorUserId    String?      @db.Uuid
+  action         String
+  resourceType   String
+  resourceId     String
+  payload        Json?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor          User?        @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([resourceType, resourceId])
+}
