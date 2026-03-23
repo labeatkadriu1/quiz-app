@@ -1,0 +1,3 @@
+ALTER TABLE "Quiz"
+  ADD COLUMN "questionFlowMode" TEXT NOT NULL DEFAULT 'STEP_BY_STEP',
+  ADD COLUMN "showAnswerFeedback" BOOLEAN NOT NULL DEFAULT true;

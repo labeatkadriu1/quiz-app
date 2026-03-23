@@ -22,6 +22,21 @@
     },
     "JWT_REFRESH_TTL": {
       "value": "30d"
+    },
+    "SMTP_HOST": {
+      "value": "smtp.mailprovider.com"
+    },
+    "SMTP_PORT": {
+      "value": "587"
+    },
+    "SMTP_USER": {
+      "value": "replace_me"
+    },
+    "SMTP_PASS": {
+      "value": "replace_me"
+    },
+    "SMTP_FROM": {
+      "value": "QuizOS <no-reply@yourdomain.com>"
     }
   },
   "scripts": {

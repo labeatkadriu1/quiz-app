@@ -35,6 +35,54 @@ enum InvitationStatus {
   REVOKED
 }
 
+enum ClassMemberType {
+  TEACHER
+  STUDENT
+}
+
+enum QuizStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum QuizVisibility {
+  PRIVATE
+  ORG_PUBLIC
+  PUBLIC_LINK
+  EMBED_PUBLIC
+}
+
+enum QuestionType {
+  SINGLE_CHOICE
+  MULTIPLE_CHOICE
+  TRUE_FALSE
+  SHORT_TEXT
+}
+
+enum AssignmentScopeType {
+  STUDENT
+  SELECTED_STUDENTS
+  CLASS
+  MULTI_CLASS
+  TEACHER_STUDENTS
+  SCHOOL_WIDE
+  PUBLIC_LINK
+  EMBED_PUBLIC
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  EXPIRED
+}
+
+enum JoinRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model Organization {
   id           String                 @id @default(uuid()) @db.Uuid
   name         String
@@ -47,8 +95,17 @@ model Organization {
   members      OrganizationMember[]
   roles        Role[]
   schools      School[]
+  classes      Class[]
+  classMemberships ClassMembership[]
+  quizzes      Quiz[]
+  quizAssignments QuizAssignment[]
+  quizAttempts QuizAttempt[]
+  results      Result[]
   invitations  Invitation[]
   auditLogs    AuditLog[]
+  classJoinLinks    ClassJoinLink[]
+  classJoinRequests ClassJoinRequest[]
+  leadSubmissions   LeadSubmission[]
 
   @@index([type])
   @@index([status])
@@ -84,8 +141,18 @@ model User {
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
   memberships       OrganizationMember[]
+  classMemberships  ClassMembership[]
+  assignmentTargets QuizAssignmentTarget[]
+  quizzes           Quiz[]
+  quizAssignments   QuizAssignment[]
+  quizAttempts      QuizAttempt[]
+  results           Result[]
   sentInvitations   Invitation[]         @relation("InvitationSender")
   auditActions      AuditLog[]           @relation("AuditActor")
+  classJoinLinksCreated ClassJoinLink[]
+  classJoinRequests ClassJoinRequest[]
+  reviewedClassJoinRequests ClassJoinRequest[] @relation("ClassJoinRequestReviewer")
+  leadSubmissions   LeadSubmission[]
 
   @@index([status])
 }
@@ -141,8 +208,221 @@ model School {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  classes        Class[]
+  assignmentTargets QuizAssignmentTarget[]
 
   @@index([organizationId])
+}
+
+model Class {
+  id             String            @id @default(uuid()) @db.Uuid
+  organizationId String            @db.Uuid
+  schoolId       String            @db.Uuid
+  name           String
+  code           String?
+  gradeLevel     String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  school         School            @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  memberships    ClassMembership[]
+  assignmentTargets QuizAssignmentTarget[]
+  joinLinks      ClassJoinLink[]
+  joinRequests   ClassJoinRequest[]
+
+  @@unique([schoolId, name])
+  @@index([organizationId, schoolId])
+}
+
+model ClassMembership {
+  id             String          @id @default(uuid()) @db.Uuid
+  organizationId String          @db.Uuid
+  classId        String          @db.Uuid
+  userId         String          @db.Uuid
+  memberType     ClassMemberType
+  createdAt      DateTime        @default(now())
+  class          Class           @relation(fields: [classId], references: [id], onDelete: Cascade)
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, userId, memberType])
+  @@index([organizationId, userId, memberType])
+}
+
+model Quiz {
+  id                  String            @id @default(uuid()) @db.Uuid
+  organizationId      String            @db.Uuid
+  ownerUserId         String            @db.Uuid
+  title               String
+  description         String?
+  status              QuizStatus        @default(DRAFT)
+  visibility          QuizVisibility    @default(PRIVATE)
+  publicAccessEnabled Boolean           @default(false)
+  publicAccessMode    String?
+  publicAccessToken   String?           @unique
+  publicAccessPasswordHash String?
+  publicAccessApprovedEmails Json?
+  endFormEnabled      Boolean           @default(false)
+  endFormRequireSubmit Boolean          @default(false)
+  endFormTitle        String?
+  endFormDescription  String?
+  endFormSubmitLabel  String?
+  endFormFields       Json?
+  passScore           Int               @default(0)
+  attemptLimitDefault Int?
+  timeLimitSeconds    Int?
+  shuffleQuestions    Boolean           @default(false)
+  shuffleAnswers      Boolean           @default(false)
+  questionFlowMode    String            @default("STEP_BY_STEP")
+  showAnswerFeedback  Boolean           @default(true)
+  publishedAt         DateTime?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  organization        Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  owner               User              @relation(fields: [ownerUserId], references: [id], onDelete: Restrict)
+  questions           Question[]
+  assignments         QuizAssignment[]
+  attempts            QuizAttempt[]
+  results             Result[]
+  leadSubmissions     LeadSubmission[]
+
+  @@index([organizationId, status])
+  @@index([organizationId, publishedAt])
+}
+
+model Question {
+  id             String         @id @default(uuid()) @db.Uuid
+  quizId         String         @db.Uuid
+  type           QuestionType
+  prompt         String
+  explanation    String?
+  points         Int            @default(1)
+  position       Int
+  metadata       Json?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  quiz           Quiz           @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  answerOptions  AnswerOption[]
+  attemptAnswers AttemptAnswer[]
+
+  @@unique([quizId, position])
+  @@index([quizId, type])
+}
+
+model AnswerOption {
+  id             String   @id @default(uuid()) @db.Uuid
+  questionId     String   @db.Uuid
+  label          String
+  value          String
+  isCorrect      Boolean  @default(false)
+  position       Int
+  createdAt      DateTime @default(now())
+  question       Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, position])
+  @@index([questionId, isCorrect])
+}
+
+model QuizAssignment {
+  id             String               @id @default(uuid()) @db.Uuid
+  organizationId String               @db.Uuid
+  quizId         String               @db.Uuid
+  assignedById   String               @db.Uuid
+  scopeType      AssignmentScopeType
+  startAt        DateTime?
+  endAt          DateTime?
+  attemptLimit   Int?
+  passScoreOverride Int?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  quiz           Quiz                 @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  assignedBy     User                 @relation(fields: [assignedById], references: [id], onDelete: Restrict)
+  targets        QuizAssignmentTarget[]
+  attempts       QuizAttempt[]
+
+  @@index([organizationId, quizId])
+  @@index([startAt, endAt])
+}
+
+model QuizAssignmentTarget {
+  id             String         @id @default(uuid()) @db.Uuid
+  assignmentId   String         @db.Uuid
+  targetType     String
+  userId         String?        @db.Uuid
+  classId        String?        @db.Uuid
+  schoolId       String?        @db.Uuid
+  assignment     QuizAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  user           User?          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  class          Class?         @relation(fields: [classId], references: [id], onDelete: Cascade)
+  school         School?        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@index([assignmentId, targetType])
+  @@index([userId])
+  @@index([classId])
+  @@index([schoolId])
+}
+
+model QuizAttempt {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @db.Uuid
+  quizId         String        @db.Uuid
+  assignmentId   String?       @db.Uuid
+  userId         String?       @db.Uuid
+  status         AttemptStatus @default(IN_PROGRESS)
+  startedAt      DateTime      @default(now())
+  submittedAt    DateTime?
+  score          Int?
+  percentage     Float?
+  timeSpentSec   Int?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  quiz           Quiz          @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  assignment     QuizAssignment? @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
+  user           User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  answers        AttemptAnswer[]
+  result         Result?
+  leadSubmission LeadSubmission?
+
+  @@index([organizationId, quizId, userId])
+  @@index([status, submittedAt])
+}
+
+model AttemptAnswer {
+  id             String      @id @default(uuid()) @db.Uuid
+  attemptId      String      @db.Uuid
+  questionId     String      @db.Uuid
+  answerPayload  Json
+  isCorrect      Boolean?
+  pointsAwarded  Int?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  attempt        QuizAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question       Question    @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([attemptId, questionId])
+  @@index([questionId])
+}
+
+model Result {
+  id             String      @id @default(uuid()) @db.Uuid
+  organizationId String      @db.Uuid
+  attemptId      String      @unique @db.Uuid
+  quizId         String      @db.Uuid
+  userId         String?     @db.Uuid
+  totalPoints    Int
+  earnedPoints   Int
+  percentage     Float
+  passed         Boolean
+  createdAt      DateTime    @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  attempt        QuizAttempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  quiz           Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, quizId])
+  @@index([organizationId, userId])
 }
 
 model Invitation {
@@ -178,4 +458,64 @@ model AuditLog {
 
   @@index([organizationId, createdAt])
   @@index([resourceType, resourceId])
+}
+
+model LeadSubmission {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  quizId         String       @db.Uuid
+  attemptId      String?      @unique @db.Uuid
+  userId         String?      @db.Uuid
+  name           String?
+  email          String?
+  phone          String?
+  payload        Json
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  quiz           Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  attempt        QuizAttempt? @relation(fields: [attemptId], references: [id], onDelete: SetNull)
+  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, quizId, createdAt])
+  @@index([email])
+}
+
+model ClassJoinLink {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  classId        String       @db.Uuid
+  tokenHash      String       @unique
+  expiresAt      DateTime?
+  active         Boolean      @default(true)
+  createdByUserId String      @db.Uuid
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  class          Class        @relation(fields: [classId], references: [id], onDelete: Cascade)
+  createdBy      User         @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  requests       ClassJoinRequest[]
+
+  @@index([organizationId, classId])
+}
+
+model ClassJoinRequest {
+  id              String            @id @default(uuid()) @db.Uuid
+  organizationId  String            @db.Uuid
+  classId         String            @db.Uuid
+  joinLinkId      String            @db.Uuid
+  email           String
+  studentUserId   String?           @db.Uuid
+  status          JoinRequestStatus @default(PENDING)
+  requestedAt     DateTime          @default(now())
+  reviewedAt      DateTime?
+  reviewedByUserId String?          @db.Uuid
+  note            String?
+  organization    Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  class           Class             @relation(fields: [classId], references: [id], onDelete: Cascade)
+  joinLink        ClassJoinLink     @relation(fields: [joinLinkId], references: [id], onDelete: Cascade)
+  studentUser     User?             @relation(fields: [studentUserId], references: [id], onDelete: SetNull)
+  reviewedBy      User?             @relation("ClassJoinRequestReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, classId, status])
+  @@index([email, status])
 }
