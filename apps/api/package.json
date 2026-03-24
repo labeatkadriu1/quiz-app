@@ -10,6 +10,7 @@
     "migrate": "PRISMA_ENGINES_CACHE_DIR=./.prisma prisma migrate deploy",
     "prisma:generate": "PRISMA_ENGINES_CACHE_DIR=./.prisma prisma generate",
     "prisma:migrate": "PRISMA_ENGINES_CACHE_DIR=./.prisma prisma migrate dev",
+    "prisma:seed": "node prisma/seed.js",
     "lint": "echo 'lint not configured yet'",
     "test": "echo 'tests not configured yet'"
   },

@@ -32,6 +32,19 @@ interface BillingStatus {
   paymentRequired: boolean;
 }
 
+interface LimitsStatus {
+  limits: {
+    memberLimit: number;
+    quizLimit: number;
+    monthlyAttemptLimit: number;
+  };
+  usage: {
+    members: number;
+    quizzes: number;
+    monthlyAttempts: number;
+  };
+}
+
 interface QuizItem {
   id: string;
   title: string;
@@ -154,6 +167,7 @@ export default function WorkspaceDashboardPage(): JSX.Element {
   const [invitations, setInvitations] = useState<InvitationItem[]>([]);
   const [activeTab, setActiveTab] = useState<WorkspaceTab>('OVERVIEW');
   const [billing, setBilling] = useState<BillingStatus | null>(null);
+  const [limits, setLimits] = useState<LimitsStatus | null>(null);
   const [activatingBilling, setActivatingBilling] = useState(false);
 
   useEffect(() => {
@@ -233,22 +247,25 @@ export default function WorkspaceDashboardPage(): JSX.Element {
       'x-organization-id': activeOrgId
     };
 
-    const [quizzesRes, classesRes, invitesRes, billingRes] = await Promise.all([
+    const [quizzesRes, classesRes, invitesRes, billingRes, limitsRes] = await Promise.all([
       fetch(`${API_BASE}/quizzes`, { headers }),
       fetch(`${API_BASE}/classes`, { headers }),
       fetch(`${API_BASE}/invitations`, { headers }),
-      fetch(`${API_BASE}/organizations/current/billing`, { headers })
+      fetch(`${API_BASE}/organizations/current/billing`, { headers }),
+      fetch(`${API_BASE}/organizations/current/limits`, { headers })
     ]);
 
     const quizzesPayload = (await quizzesRes.json()) as QuizItem[] | { message?: string };
     const classesPayload = (await classesRes.json()) as ClassItem[] | { message?: string };
     const invitesPayload = (await invitesRes.json()) as InvitationItem[] | { message?: string };
     const billingPayload = (await billingRes.json()) as BillingStatus | { message?: string };
+    const limitsPayload = (await limitsRes.json()) as LimitsStatus | { message?: string };
 
     setQuizzes(Array.isArray(quizzesPayload) ? quizzesPayload : []);
     setClasses(Array.isArray(classesPayload) ? classesPayload : []);
     setInvitations(Array.isArray(invitesPayload) ? invitesPayload : []);
     setBilling(billingRes.ok && 'billingStatus' in billingPayload ? billingPayload as BillingStatus : null);
+    setLimits(limitsRes.ok && 'limits' in limitsPayload ? limitsPayload as LimitsStatus : null);
   }
 
   async function activateBilling(): Promise<void> {
@@ -335,6 +352,16 @@ export default function WorkspaceDashboardPage(): JSX.Element {
             {billing?.billingStatus ? <span className="chip">Billing: {billing.billingStatus}</span> : null}
             {billing?.billingStatus === 'TRIALING' ? <span className="chip">Trial left: {billing.trialDaysLeft} days</span> : null}
             {membership.role?.name ? <span className="chip">Role: {membership.role.name}</span> : null}
+            {limits ? (
+              <span className="chip">
+                Usage: {limits.usage.members}/{limits.limits.memberLimit} members · {limits.usage.quizzes}/{limits.limits.quizLimit} quizzes
+              </span>
+            ) : null}
+          </div>
+          <div style={{ display: 'flex', gap: '.5rem', flexWrap: 'wrap', marginTop: '.7rem' }}>
+            <Link href={`/dashboard/workspace/${orgId}/assignment-requests`} className="btn btn-ghost">
+              Approve Assignment Requests
+            </Link>
           </div>
           {billing?.paymentRequired ? (
             <div

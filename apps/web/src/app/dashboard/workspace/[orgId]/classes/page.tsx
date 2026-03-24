@@ -31,6 +31,7 @@ interface JoinRequestItem {
   id: string;
   email: string;
   requestedAt: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
   note?: string | null;
 }
 
@@ -47,6 +48,25 @@ interface MemberItem {
   } | null;
 }
 
+interface BillingStatus {
+  paymentRequired: boolean;
+  billingStatus: string;
+  trialDaysLeft: number;
+}
+
+interface LimitsStatus {
+  limits: {
+    memberLimit: number;
+    quizLimit: number;
+    monthlyAttemptLimit: number;
+  };
+  usage: {
+    members: number;
+    quizzes: number;
+    monthlyAttempts: number;
+  };
+}
+
 export default function WorkspaceClassesPage(): JSX.Element {
   const params = useParams<{ orgId: string }>();
   const router = useRouter();
@@ -60,6 +80,8 @@ export default function WorkspaceClassesPage(): JSX.Element {
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [schools, setSchools] = useState<SchoolItem[]>([]);
   const [members, setMembers] = useState<MemberItem[]>([]);
+  const [billing, setBilling] = useState<BillingStatus | null>(null);
+  const [limits, setLimits] = useState<LimitsStatus | null>(null);
 
   const [schoolName, setSchoolName] = useState('');
   const [schoolTimezone, setSchoolTimezone] = useState('Europe/Belgrade');
@@ -70,6 +92,7 @@ export default function WorkspaceClassesPage(): JSX.Element {
   const [teacherByClass, setTeacherByClass] = useState<Record<string, string>>({});
   const [joinUrlByClass, setJoinUrlByClass] = useState<Record<string, string>>({});
   const [joinRequestsByClass, setJoinRequestsByClass] = useState<Record<string, JoinRequestItem[]>>({});
+  const [requestStatusByClass, setRequestStatusByClass] = useState<Record<string, 'PENDING' | 'APPROVED' | 'REJECTED'>>({});
 
   const teacherCandidates = useMemo(
     () =>
@@ -96,8 +119,33 @@ export default function WorkspaceClassesPage(): JSX.Element {
   async function loadAll(): Promise<void> {
     setLoading(true);
     setError(null);
-    await Promise.all([loadSchools(), loadClasses(), loadMembers()]);
+    await Promise.all([loadSchools(), loadClasses(), loadMembers(), loadBilling()]);
     setLoading(false);
+  }
+
+  async function loadBilling(): Promise<void> {
+    const token = getTokenOrRedirect();
+    if (!token) {
+      return;
+    }
+    const [billingRes, limitsRes] = await Promise.all([
+      fetch(`${API_BASE}/organizations/current/billing`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'x-organization-id': orgId
+        }
+      }),
+      fetch(`${API_BASE}/organizations/current/limits`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'x-organization-id': orgId
+        }
+      })
+    ]);
+    const billingPayload = (await billingRes.json()) as BillingStatus | { message?: string };
+    const limitsPayload = (await limitsRes.json()) as LimitsStatus | { message?: string };
+    setBilling(billingRes.ok && 'billingStatus' in billingPayload ? billingPayload as BillingStatus : null);
+    setLimits(limitsRes.ok && 'limits' in limitsPayload ? limitsPayload as LimitsStatus : null);
   }
 
   async function loadSchools(): Promise<void> {
@@ -162,6 +210,10 @@ export default function WorkspaceClassesPage(): JSX.Element {
     event.preventDefault();
     setError(null);
     setSuccess(null);
+    if (billing?.paymentRequired) {
+      setError('Feature locked: trial expired. Activate billing to create schools.');
+      return;
+    }
 
     const token = getTokenOrRedirect();
     if (!token) {
@@ -203,6 +255,10 @@ export default function WorkspaceClassesPage(): JSX.Element {
     event.preventDefault();
     setError(null);
     setSuccess(null);
+    if (billing?.paymentRequired) {
+      setError('Feature locked: trial expired. Activate billing to create classes.');
+      return;
+    }
 
     const token = getTokenOrRedirect();
     if (!token) {
@@ -247,6 +303,10 @@ export default function WorkspaceClassesPage(): JSX.Element {
   }
 
   async function assignTeacher(classId: string): Promise<void> {
+    if (billing?.paymentRequired) {
+      setError('Feature locked: trial expired. Activate billing to assign teachers.');
+      return;
+    }
     const teacherId = teacherByClass[classId];
     if (!teacherId) {
       setError('Select a teacher first');
@@ -286,6 +346,10 @@ export default function WorkspaceClassesPage(): JSX.Element {
   }
 
   async function createJoinLink(classId: string): Promise<void> {
+    if (billing?.paymentRequired) {
+      setError('Feature locked: trial expired. Activate billing to create join links.');
+      return;
+    }
     const token = getTokenOrRedirect();
     if (!token) {
       return;
@@ -315,12 +379,13 @@ export default function WorkspaceClassesPage(): JSX.Element {
     }
   }
 
-  async function loadJoinRequests(classId: string): Promise<void> {
+  async function loadJoinRequests(classId: string, status?: 'PENDING' | 'APPROVED' | 'REJECTED'): Promise<void> {
     const token = getTokenOrRedirect();
     if (!token) {
       return;
     }
-    const response = await fetch(`${API_BASE}/classes/${classId}/join-requests`, {
+    const activeStatus = status ?? requestStatusByClass[classId] ?? 'PENDING';
+    const response = await fetch(`${API_BASE}/classes/${classId}/join-requests?status=${activeStatus}`, {
       headers: {
         Authorization: `Bearer ${token}`,
         'x-organization-id': orgId
@@ -331,10 +396,15 @@ export default function WorkspaceClassesPage(): JSX.Element {
       setError('Unable to load join requests');
       return;
     }
+    setRequestStatusByClass((prev) => ({ ...prev, [classId]: activeStatus }));
     setJoinRequestsByClass((prev) => ({ ...prev, [classId]: payload }));
   }
 
   async function reviewJoinRequest(classId: string, requestId: string, approve: boolean): Promise<void> {
+    if (billing?.paymentRequired) {
+      setError('Feature locked: trial expired. Activate billing to review class requests.');
+      return;
+    }
     const token = getTokenOrRedirect();
     if (!token) {
       return;
@@ -358,7 +428,7 @@ export default function WorkspaceClassesPage(): JSX.Element {
         return;
       }
       setSuccess(approve ? 'Student approved and added to class' : 'Join request rejected');
-      await Promise.all([loadClasses(), loadJoinRequests(classId)]);
+      await Promise.all([loadClasses(), loadJoinRequests(classId, requestStatusByClass[classId] ?? 'PENDING')]);
     } finally {
       setBusy(false);
     }
@@ -392,7 +462,13 @@ export default function WorkspaceClassesPage(): JSX.Element {
           <div className="chip-row">
             <span className="chip">Schools: {schools.length}</span>
             <span className="chip">Classes: {classes.length}</span>
+            {limits ? <span className="chip">Members: {limits.usage.members}/{limits.limits.memberLimit}</span> : null}
           </div>
+          {billing?.paymentRequired ? (
+            <p style={{ color: '#b45309', marginTop: '.6rem' }}>
+              Feature locked: trial expired. Activate billing to create classes, links, and approvals.
+            </p>
+          ) : null}
           <div style={{ display: 'flex', gap: '.5rem', marginTop: '.8rem' }}>
             <Link href={`/dashboard/workspace/${orgId}`} className="btn btn-ghost">
               Back
@@ -418,7 +494,7 @@ export default function WorkspaceClassesPage(): JSX.Element {
                   onChange={(event) => setSchoolTimezone(event.target.value)}
                 />
               </div>
-              <button className="btn btn-primary" type="submit" disabled={busy}>
+              <button className="btn btn-primary" type="submit" disabled={busy || Boolean(billing?.paymentRequired)}>
                 {busy ? 'Saving...' : 'Create School'}
               </button>
             </form>
@@ -458,7 +534,7 @@ export default function WorkspaceClassesPage(): JSX.Element {
                 <label htmlFor="classCode">Class code</label>
                 <input id="classCode" value={classCode} onChange={(event) => setClassCode(event.target.value)} />
               </div>
-              <button className="btn btn-primary" type="submit" disabled={busy}>
+              <button className="btn btn-primary" type="submit" disabled={busy || Boolean(billing?.paymentRequired)}>
                 {busy ? 'Saving...' : 'Create Class'}
               </button>
             </form>
@@ -482,6 +558,7 @@ export default function WorkspaceClassesPage(): JSX.Element {
                 const pendingCount = item.joinRequests?.length ?? 0;
                 const joinUrl = joinUrlByClass[item.id];
                 const requests = joinRequestsByClass[item.id] ?? [];
+                const activeStatus = requestStatusByClass[item.id] ?? 'PENDING';
 
                 return (
                   <div key={item.id} className="glass-card" style={{ padding: '.7rem' }}>
@@ -514,14 +591,28 @@ export default function WorkspaceClassesPage(): JSX.Element {
                           );
                         })}
                       </select>
-                      <button className="btn btn-ghost" type="button" onClick={() => void assignTeacher(item.id)} disabled={busy}>
+                      <button
+                        className="btn btn-ghost"
+                        type="button"
+                        onClick={() => void assignTeacher(item.id)}
+                        disabled={busy || Boolean(billing?.paymentRequired)}
+                      >
                         Assign Teacher
                       </button>
-                      <button className="btn btn-ghost" type="button" onClick={() => void createJoinLink(item.id)} disabled={busy}>
+                      <button
+                        className="btn btn-ghost"
+                        type="button"
+                        onClick={() => void createJoinLink(item.id)}
+                        disabled={busy || Boolean(billing?.paymentRequired)}
+                      >
                         Create Join Link
                       </button>
-                      <button className="btn btn-ghost" type="button" onClick={() => void loadJoinRequests(item.id)}>
-                        Load Requests
+                      <button
+                        className="btn btn-ghost"
+                        type="button"
+                        onClick={() => void loadJoinRequests(item.id, activeStatus)}
+                      >
+                        Load Requests ({activeStatus.toLowerCase()})
                       </button>
                     </div>
 
@@ -544,6 +635,23 @@ export default function WorkspaceClassesPage(): JSX.Element {
                       </div>
                     ) : null}
 
+                    <div style={{ display: 'flex', gap: '.4rem', flexWrap: 'wrap', marginTop: '.6rem' }}>
+                      {(['PENDING', 'APPROVED', 'REJECTED'] as const).map((status) => (
+                        <button
+                          key={`${item.id}-${status}`}
+                          className="btn btn-ghost"
+                          type="button"
+                          onClick={() => void loadJoinRequests(item.id, status)}
+                          style={{
+                            borderColor: activeStatus === status ? '#0f766e' : undefined,
+                            color: activeStatus === status ? '#0f766e' : undefined
+                          }}
+                        >
+                          {status.charAt(0) + status.slice(1).toLowerCase()}
+                        </button>
+                      ))}
+                    </div>
+
                     {requests.length > 0 ? (
                       <div style={{ display: 'grid', gap: '.45rem', marginTop: '.6rem' }}>
                         {requests.map((request) => (
@@ -554,25 +662,28 @@ export default function WorkspaceClassesPage(): JSX.Element {
                                 <div style={{ color: 'var(--muted)', fontSize: '.82rem' }}>
                                   Requested: {new Date(request.requestedAt).toLocaleString()}
                                 </div>
+                                <div style={{ color: 'var(--muted)', fontSize: '.82rem' }}>Status: {request.status}</div>
                               </div>
-                              <div style={{ display: 'flex', gap: '.4rem' }}>
-                                <button
-                                  className="btn btn-primary"
-                                  type="button"
-                                  onClick={() => void reviewJoinRequest(item.id, request.id, true)}
-                                  disabled={busy}
-                                >
-                                  Approve
-                                </button>
-                                <button
-                                  className="btn btn-ghost"
-                                  type="button"
-                                  onClick={() => void reviewJoinRequest(item.id, request.id, false)}
-                                  disabled={busy}
-                                >
-                                  Reject
-                                </button>
-                              </div>
+                              {request.status === 'PENDING' ? (
+                                <div style={{ display: 'flex', gap: '.4rem' }}>
+                                  <button
+                                    className="btn btn-primary"
+                                    type="button"
+                                    onClick={() => void reviewJoinRequest(item.id, request.id, true)}
+                                    disabled={busy || Boolean(billing?.paymentRequired)}
+                                  >
+                                    Approve
+                                  </button>
+                                  <button
+                                    className="btn btn-ghost"
+                                    type="button"
+                                    onClick={() => void reviewJoinRequest(item.id, request.id, false)}
+                                    disabled={busy || Boolean(billing?.paymentRequired)}
+                                  >
+                                    Reject
+                                  </button>
+                                </div>
+                              ) : null}
                             </div>
                           </div>
                         ))}

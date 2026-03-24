@@ -3,6 +3,7 @@ import { IsEmail, IsInt, IsObject, IsOptional, IsString, IsUUID, ValidateNested 
 import { Type } from 'class-transformer';
 import { CurrentUser, type AuthenticatedUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { BillingGuard } from '../billing/billing.guard';
 import { AttemptsService } from './attempts.service';
 
 class SaveAnswerDto {
@@ -30,6 +31,10 @@ class PublicStartDto {
   @IsOptional()
   @IsEmail()
   email?: string;
+
+  @IsOptional()
+  @IsString()
+  sourceDomain?: string;
 }
 
 class PublicEndFormDto {
@@ -73,7 +78,7 @@ export class AttemptsController {
   constructor(private readonly attemptsService: AttemptsService) {}
 
   @Post('quizzes/:id/attempts/start')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, BillingGuard)
   start(
     @Headers('x-organization-id') organizationId: string | undefined,
     @Param('id') quizId: string,
@@ -87,7 +92,7 @@ export class AttemptsController {
   }
 
   @Put('attempts/:id/answers')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, BillingGuard)
   saveAnswer(
     @Headers('x-organization-id') organizationId: string | undefined,
     @Param('id') attemptId: string,
@@ -103,7 +108,7 @@ export class AttemptsController {
   }
 
   @Post('attempts/:id/submit')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, BillingGuard)
   submit(
     @Headers('x-organization-id') organizationId: string | undefined,
     @Param('id') attemptId: string,
@@ -117,7 +122,7 @@ export class AttemptsController {
   }
 
   @Get('attempts/:id/result')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, BillingGuard)
   result(
     @Headers('x-organization-id') organizationId: string | undefined,
     @Param('id') attemptId: string,
@@ -136,7 +141,8 @@ export class AttemptsController {
       quizId,
       token: body.token,
       password: body.password,
-      email: body.email
+      email: body.email,
+      sourceDomain: body.sourceDomain
     });
   }
 
@@ -172,10 +178,15 @@ export class AttemptsController {
   }
 
   @Get('public/quizzes/:id')
-  getPublicQuiz(@Param('id') quizId: string, @Query('token') token: string | undefined) {
+  getPublicQuiz(
+    @Param('id') quizId: string,
+    @Query('token') token: string | undefined,
+    @Query('source') sourceDomain: string | undefined
+  ) {
     return this.attemptsService.getPublicQuiz({
       quizId,
-      token: token ?? ''
+      token: token ?? '',
+      sourceDomain
     });
   }
 

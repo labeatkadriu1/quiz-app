@@ -23,6 +23,25 @@ interface OrganizationMembership {
   };
 }
 
+interface BillingStatus {
+  paymentRequired: boolean;
+  billingStatus: string;
+  trialDaysLeft: number;
+}
+
+interface LimitsStatus {
+  limits: {
+    memberLimit: number;
+    quizLimit: number;
+    monthlyAttemptLimit: number;
+  };
+  usage: {
+    members: number;
+    quizzes: number;
+    monthlyAttempts: number;
+  };
+}
+
 export default function WorkspaceQuizzesPage(): JSX.Element {
   const params = useParams<{ orgId: string }>();
   const router = useRouter();
@@ -38,6 +57,8 @@ export default function WorkspaceQuizzesPage(): JSX.Element {
   const [deleteTarget, setDeleteTarget] = useState<QuizItem | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [organizationName, setOrganizationName] = useState<string>(orgId);
+  const [billing, setBilling] = useState<BillingStatus | null>(null);
+  const [limits, setLimits] = useState<LimitsStatus | null>(null);
 
   const publishedCount = useMemo(() => quizzes.filter((quiz) => quiz.status === 'PUBLISHED').length, [quizzes]);
 
@@ -66,6 +87,25 @@ export default function WorkspaceQuizzesPage(): JSX.Element {
       }
       setQuizzes(payload);
 
+      const [billingRes, limitsRes] = await Promise.all([
+        fetch(`${API_BASE}/organizations/current/billing`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'x-organization-id': orgId
+          }
+        }),
+        fetch(`${API_BASE}/organizations/current/limits`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'x-organization-id': orgId
+          }
+        })
+      ]);
+      const billingPayload = (await billingRes.json()) as BillingStatus | { message?: string };
+      const limitsPayload = (await limitsRes.json()) as LimitsStatus | { message?: string };
+      setBilling(billingRes.ok && 'billingStatus' in billingPayload ? billingPayload as BillingStatus : null);
+      setLimits(limitsRes.ok && 'limits' in limitsPayload ? limitsPayload as LimitsStatus : null);
+
       const orgResponse = await fetch(`${API_BASE}/organizations`, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -88,6 +128,10 @@ export default function WorkspaceQuizzesPage(): JSX.Element {
   async function createQuiz(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     setError(null);
+    if (billing?.paymentRequired) {
+      setError('Feature locked: trial expired. Activate billing to create quizzes.');
+      return;
+    }
     if (title.trim().length < 2) {
       setError('Quiz title must be at least 2 characters');
       return;
@@ -133,6 +177,10 @@ export default function WorkspaceQuizzesPage(): JSX.Element {
   }
 
   async function publishQuiz(quizId: string): Promise<void> {
+    if (billing?.paymentRequired) {
+      setError('Feature locked: trial expired. Activate billing to publish quizzes.');
+      return;
+    }
     const token = localStorage.getItem('quiz_access_token');
     if (!token) {
       router.replace('/login');
@@ -161,6 +209,10 @@ export default function WorkspaceQuizzesPage(): JSX.Element {
   }
 
   async function deleteQuiz(quiz: QuizItem): Promise<void> {
+    if (billing?.paymentRequired) {
+      setError('Feature locked: trial expired. Activate billing to delete quizzes.');
+      return;
+    }
     const token = localStorage.getItem('quiz_access_token');
     if (!token) {
       router.replace('/login');
@@ -214,7 +266,13 @@ export default function WorkspaceQuizzesPage(): JSX.Element {
             <span className="chip">Total: {quizzes.length}</span>
             <span className="chip">Published: {publishedCount}</span>
             <span className="chip">Draft: {quizzes.length - publishedCount}</span>
+            {limits ? <span className="chip">Usage quizzes: {limits.usage.quizzes}/{limits.limits.quizLimit}</span> : null}
           </div>
+          {billing?.paymentRequired ? (
+            <p style={{ color: '#b45309', marginTop: '.6rem' }}>
+              Feature locked: trial expired. Activate billing to create, publish, edit, or delete quizzes.
+            </p>
+          ) : null}
           <div style={{ display: 'flex', gap: '.5rem', marginTop: '.8rem' }}>
             <Link href={`/dashboard/workspace/${orgId}`} className="btn btn-ghost">
               Back
@@ -283,7 +341,7 @@ export default function WorkspaceQuizzesPage(): JSX.Element {
                 </div>
               </div>
               {error ? <p style={{ color: '#b91c1c' }}>{error}</p> : null}
-              <button className="btn btn-primary" type="submit" disabled={busy}>
+              <button className="btn btn-primary" type="submit" disabled={busy || Boolean(billing?.paymentRequired)}>
                 {busy ? 'Saving...' : 'Create Quiz'}
               </button>
             </form>
@@ -309,7 +367,12 @@ export default function WorkspaceQuizzesPage(): JSX.Element {
                     </div>
                     <div style={{ display: 'flex', gap: '.45rem' }}>
                       {quiz.status === 'DRAFT' ? (
-                        <button type="button" className="btn btn-ghost" onClick={() => void publishQuiz(quiz.id)} disabled={busy}>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          onClick={() => void publishQuiz(quiz.id)}
+                          disabled={busy || Boolean(billing?.paymentRequired)}
+                        >
                           Publish
                         </button>
                       ) : null}
@@ -323,7 +386,22 @@ export default function WorkspaceQuizzesPage(): JSX.Element {
                       <button
                         type="button"
                         className="btn btn-ghost"
+                        onClick={() => router.push(`/dashboard/workspace/${orgId}/quizzes/${quiz.id}/results`)}
+                      >
+                        Results Pro
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => router.push(`/dashboard/workspace/${orgId}/quizzes/${quiz.id}/publisher`)}
+                      >
+                        Publisher
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
                         onClick={() => setDeleteTarget(quiz)}
+                        disabled={Boolean(billing?.paymentRequired)}
                         style={{ borderColor: '#fecaca', color: '#b91c1c', background: '#fff5f5' }}
                       >
                         Delete

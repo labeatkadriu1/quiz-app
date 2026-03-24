@@ -1,11 +1,17 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { ClassMemberType, JoinRequestStatus, MemberStatus } from '@prisma/client';
+import { ClassMemberType, JoinRequestStatus, MemberStatus, Prisma } from '@prisma/client';
+import * as bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'crypto';
+import { EmailService } from '../email/email.service';
+import { assertBillingAccess } from '../organizations/plan-limits';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class ClassesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly emailService: EmailService
+  ) {}
 
   async createSchool(input: {
     organizationId: string;
@@ -13,6 +19,7 @@ export class ClassesService {
     timezone?: string;
     actorUserId: string;
   }) {
+    await assertBillingAccess(this.prisma, input.organizationId);
     await this.assertTeacherOrAdmin(input.organizationId, input.actorUserId);
 
     return this.prisma.school.create({
@@ -41,6 +48,7 @@ export class ClassesService {
     gradeLevel?: string;
     actorUserId: string;
   }) {
+    await assertBillingAccess(this.prisma, input.organizationId);
     await this.assertTeacherOrAdmin(input.organizationId, input.actorUserId);
 
     const school = await this.prisma.school.findFirst({
@@ -103,9 +111,22 @@ export class ClassesService {
     actorUserId: string;
   }) {
     await this.assertClassManager(input.organizationId, input.classId, input.actorUserId);
+    const billing = await assertBillingAccess(this.prisma, input.organizationId);
 
     if (input.memberType === ClassMemberType.TEACHER) {
       await this.assertAdmin(input.organizationId, input.actorUserId);
+    }
+
+    const activeMemberCount = await this.prisma.organizationMember.count({
+      where: {
+        organizationId: input.organizationId,
+        status: MemberStatus.ACTIVE
+      }
+    });
+    if (activeMemberCount >= billing.limits.memberLimit) {
+      throw new BadRequestException(
+        `Member limit reached (${billing.limits.memberLimit}) for current plan.`
+      );
     }
 
     return this.prisma.classMembership.upsert({
@@ -127,6 +148,7 @@ export class ClassesService {
   }
 
   async createJoinLink(input: { organizationId: string; classId: string; actorUserId: string; expiresAt?: Date }) {
+    await assertBillingAccess(this.prisma, input.organizationId);
     await this.assertClassManager(input.organizationId, input.classId, input.actorUserId);
 
     const classItem = await this.prisma.class.findFirst({
@@ -246,21 +268,31 @@ export class ClassesService {
     };
   }
 
-  async listJoinRequests(input: { organizationId: string; classId: string; actorUserId: string }) {
+  async listJoinRequests(input: {
+    organizationId: string;
+    classId: string;
+    actorUserId: string;
+    status?: JoinRequestStatus;
+  }) {
     await this.assertClassManager(input.organizationId, input.classId, input.actorUserId);
 
     return this.prisma.classJoinRequest.findMany({
       where: {
         organizationId: input.organizationId,
         classId: input.classId,
-        status: JoinRequestStatus.PENDING
+        ...(input.status ? { status: input.status } : {})
       },
       include: {
+        class: {
+          include: {
+            school: true
+          }
+        },
         studentUser: {
           select: { id: true, email: true, firstName: true, lastName: true }
         }
       },
-      orderBy: { requestedAt: 'asc' }
+      orderBy: { requestedAt: 'desc' }
     });
   }
 
@@ -270,10 +302,18 @@ export class ClassesService {
     actorUserId: string;
     approve: boolean;
   }) {
+    const billing = await assertBillingAccess(this.prisma, input.organizationId);
     const request = await this.prisma.classJoinRequest.findFirst({
       where: {
         id: input.requestId,
         organizationId: input.organizationId
+      },
+      include: {
+        class: {
+          include: {
+            school: true
+          }
+        }
       }
     });
     if (!request) {
@@ -287,7 +327,7 @@ export class ClassesService {
     }
 
     if (!input.approve) {
-      return this.prisma.classJoinRequest.update({
+      const rejected = await this.prisma.classJoinRequest.update({
         where: { id: request.id },
         data: {
           status: JoinRequestStatus.REJECTED,
@@ -295,36 +335,86 @@ export class ClassesService {
           reviewedByUserId: input.actorUserId
         }
       });
+      await this.prisma.auditLog.create({
+        data: {
+          organizationId: input.organizationId,
+          actorUserId: input.actorUserId,
+          action: 'CLASS_JOIN_REQUEST_REJECTED',
+          resourceType: 'CLASS_JOIN_REQUEST',
+          resourceId: request.id,
+          payload: {
+            classId: request.classId,
+            email: request.email
+          }
+        }
+      });
+      await this.emailService.sendClassJoinReviewedEmail({
+        toEmail: request.email,
+        className: request.class.name,
+        schoolName: request.class.school.name,
+        approved: false,
+        loginUrl: `${process.env.WEB_URL?.replace(/\/$/, '') ?? 'http://localhost:3001'}/login`
+      });
+      return rejected;
+    }
+
+    const activeMemberCount = await this.prisma.organizationMember.count({
+      where: {
+        organizationId: input.organizationId,
+        status: MemberStatus.ACTIVE
+      }
+    });
+    if (activeMemberCount >= billing.limits.memberLimit) {
+      throw new BadRequestException(
+        `Member limit reached (${billing.limits.memberLimit}) for current plan.`
+      );
     }
 
     const user = request.studentUserId
       ? await this.prisma.user.findUnique({ where: { id: request.studentUserId } })
       : await this.prisma.user.findUnique({ where: { email: request.email } });
 
-    if (!user) {
-      throw new BadRequestException('Student user account not found. Invite/register user first, then approve.');
-    }
+    const [firstName, ...rest] = request.email.split('@')[0].split(/[._-]/g).filter(Boolean);
+    const defaultLastName = rest.join(' ').trim();
 
-    const orgMembership = await this.prisma.organizationMember.findUnique({
-      where: {
-        organizationId_userId: {
+    const approved = await this.prisma.$transaction(async (tx) => {
+      const studentRole = await this.ensureOrganizationRole(tx, input.organizationId, 'STUDENT', 'Student');
+      const ensuredUser =
+        user ??
+        (await tx.user.create({
+          data: {
+            email: request.email,
+            firstName: firstName || 'Student',
+            lastName: defaultLastName || null,
+            passwordHash: await bcrypt.hash(randomBytes(24).toString('hex'), 10),
+            status: 'ACTIVE'
+          }
+        }));
+
+      await tx.organizationMember.upsert({
+        where: {
+          organizationId_userId: {
+            organizationId: input.organizationId,
+            userId: ensuredUser.id
+          }
+        },
+        update: {
+          status: MemberStatus.ACTIVE,
+          roleId: studentRole.id
+        },
+        create: {
           organizationId: input.organizationId,
-          userId: user.id
+          userId: ensuredUser.id,
+          roleId: studentRole.id,
+          status: MemberStatus.ACTIVE
         }
-      },
-      include: { role: true }
-    });
+      });
 
-    if (!orgMembership || orgMembership.status !== MemberStatus.ACTIVE) {
-      throw new BadRequestException('Student is not an active organization member. Invite/accept first.');
-    }
-
-    await this.prisma.$transaction(async (tx) => {
       await tx.classMembership.upsert({
         where: {
           classId_userId_memberType: {
             classId: request.classId,
-            userId: user.id,
+            userId: ensuredUser.id,
             memberType: ClassMemberType.STUDENT
           }
         },
@@ -332,27 +422,55 @@ export class ClassesService {
         create: {
           organizationId: input.organizationId,
           classId: request.classId,
-          userId: user.id,
+          userId: ensuredUser.id,
           memberType: ClassMemberType.STUDENT
         }
       });
 
-      await tx.classJoinRequest.update({
+      const reviewed = await tx.classJoinRequest.update({
         where: { id: request.id },
         data: {
           status: JoinRequestStatus.APPROVED,
           reviewedAt: new Date(),
           reviewedByUserId: input.actorUserId,
-          studentUserId: user.id
+          studentUserId: ensuredUser.id
         }
       });
+
+      await tx.auditLog.create({
+        data: {
+          organizationId: input.organizationId,
+          actorUserId: input.actorUserId,
+          action: 'CLASS_JOIN_REQUEST_APPROVED',
+          resourceType: 'CLASS_JOIN_REQUEST',
+          resourceId: request.id,
+          payload: {
+            classId: request.classId,
+            email: request.email,
+            studentUserId: ensuredUser.id
+          }
+        }
+      });
+
+      return {
+        reviewed,
+        userId: ensuredUser.id
+      };
+    });
+
+    await this.emailService.sendClassJoinReviewedEmail({
+      toEmail: request.email,
+      className: request.class.name,
+      schoolName: request.class.school.name,
+      approved: true,
+      loginUrl: `${process.env.WEB_URL?.replace(/\/$/, '') ?? 'http://localhost:3001'}/login`
     });
 
     return {
       approved: true,
       requestId: request.id,
       classId: request.classId,
-      studentUserId: user.id
+      studentUserId: approved.userId
     };
   }
 
@@ -476,5 +594,31 @@ export class ClassesService {
     if (!membership || membership.status !== MemberStatus.ACTIVE) {
       throw new ForbiddenException('Active organization membership required');
     }
+  }
+
+  private async ensureOrganizationRole(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    key: string,
+    name: string
+  ) {
+    const role = await tx.role.findUnique({
+      where: {
+        organizationId_key: {
+          organizationId,
+          key
+        }
+      }
+    });
+    if (role) {
+      return role;
+    }
+    return tx.role.create({
+      data: {
+        organizationId,
+        key,
+        name
+      }
+    });
   }
 }

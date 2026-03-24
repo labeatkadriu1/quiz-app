@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Headers, Post, UseGuards } from '@nestjs/common';
 import { OrganizationType } from '@prisma/client';
-import { IsEnum, IsString, MinLength } from 'class-validator';
+import { IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
 import { CurrentUser, type AuthenticatedUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { OrganizationsService } from './organizations.service';
@@ -9,6 +9,22 @@ class CreateOrganizationDto {
   @IsString()
   @MinLength(2)
   name!: string;
+
+  @IsEnum(OrganizationType)
+  type!: OrganizationType;
+
+  @IsOptional()
+  @IsString()
+  planCode?: string;
+
+  @IsOptional()
+  @IsString()
+  redeemCode?: string;
+}
+
+class ValidateRedeemCodeDto {
+  @IsString()
+  code!: string;
 
   @IsEnum(OrganizationType)
   type!: OrganizationType;
@@ -24,7 +40,19 @@ export class OrganizationsController {
     return this.organizationsService.createOrganization({
       name: body.name,
       type: body.type,
-      creatorUserId: user.id
+      planCode: body.planCode,
+      redeemCode: body.redeemCode,
+      creatorUserId: user.id,
+      creatorEmail: user.email
+    });
+  }
+
+  @Post('redeem-codes/validate')
+  validateRedeemCode(@Body() body: ValidateRedeemCodeDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.organizationsService.validateRedeemCode({
+      code: body.code,
+      type: body.type,
+      actorUserId: user.id
     });
   }
 
@@ -63,6 +91,17 @@ export class OrganizationsController {
     @CurrentUser() user: AuthenticatedUser
   ) {
     return this.organizationsService.getCurrentBilling({
+      organizationId,
+      userId: user.id
+    });
+  }
+
+  @Get('current/limits')
+  getCurrentLimits(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.organizationsService.getCurrentLimits({
       organizationId,
       userId: user.id
     });

@@ -21,6 +21,7 @@ export default function RegisterPage(): JSX.Element {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [redeemCode, setRedeemCode] = useState('');
   const [acceptTerms, setAcceptTerms] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,6 +111,11 @@ export default function RegisterPage(): JSX.Element {
 
       localStorage.setItem('quiz_access_token', payload.tokens.accessToken);
       localStorage.setItem('quiz_refresh_token', payload.tokens.refreshToken);
+      if (redeemCode.trim()) {
+        localStorage.setItem('quiz_signup_redeem_code', redeemCode.trim().toUpperCase());
+      } else {
+        localStorage.removeItem('quiz_signup_redeem_code');
+      }
       setSuccess(`Account created for ${payload.user?.email ?? email}`);
       router.push('/dashboard');
     } catch {
@@ -165,6 +171,17 @@ export default function RegisterPage(): JSX.Element {
               autoComplete="email"
             />
             {fieldErrors.email ? <small className="error-text">{fieldErrors.email}</small> : null}
+          </div>
+          <div className="field">
+            <label htmlFor="redeemCode">Redeem code (optional)</label>
+            <input
+              id="redeemCode"
+              type="text"
+              value={redeemCode}
+              onChange={(event) => setRedeemCode(event.target.value.toUpperCase())}
+              placeholder="WELCOME40"
+              autoComplete="off"
+            />
           </div>
           <div className="field">
             <label htmlFor="password">Password</label>

@@ -15,6 +15,23 @@ interface PasswordResetEmailInput {
   expiresAt: Date;
 }
 
+interface AssignmentRequestReviewedEmailInput {
+  toEmail: string;
+  organizationName: string;
+  quizTitle: string;
+  approved: boolean;
+  note?: string | null;
+  loginUrl: string;
+}
+
+interface ClassJoinReviewedEmailInput {
+  toEmail: string;
+  className: string;
+  schoolName: string;
+  approved: boolean;
+  loginUrl: string;
+}
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -108,6 +125,86 @@ export class EmailService {
       return delivered ? { delivered: true } : { delivered: false, reason: 'Mail provider did not accept recipient' };
     } catch (error) {
       this.logger.error(`Failed to send password reset email to ${input.toEmail}`, error instanceof Error ? error.stack : undefined);
+      return { delivered: false, reason: 'Email delivery failed' };
+    }
+  }
+
+  async sendAssignmentRequestReviewedEmail(
+    input: AssignmentRequestReviewedEmailInput
+  ): Promise<{ delivered: boolean; reason?: string }> {
+    const transporter = this.getTransporter();
+    if (!transporter) {
+      return { delivered: false, reason: 'SMTP is not configured' };
+    }
+    const from = process.env.SMTP_FROM ?? 'QuizOS <no-reply@quizos.local>';
+    const subject = input.approved
+      ? `Access approved for "${input.quizTitle}"`
+      : `Access request update for "${input.quizTitle}"`;
+    const statusText = input.approved ? 'approved' : 'rejected';
+    const html = `
+      <div style="font-family:Arial,sans-serif;line-height:1.5;color:#111827">
+        <h2 style="margin-bottom:8px;">Assignment request ${statusText}</h2>
+        <p>Your request for <strong>${escapeHtml(input.quizTitle)}</strong> in <strong>${escapeHtml(input.organizationName)}</strong> was <strong>${statusText}</strong>.</p>
+        ${input.note ? `<p>Note: ${escapeHtml(input.note)}</p>` : ''}
+        <p><a href="${input.loginUrl}" style="display:inline-block;padding:10px 14px;border-radius:8px;background:#0f766e;color:#ffffff;text-decoration:none;">Open QuizOS</a></p>
+      </div>
+    `;
+    const text = [
+      `Assignment request ${statusText}`,
+      `Quiz: ${input.quizTitle}`,
+      `Organization: ${input.organizationName}`,
+      input.note ? `Note: ${input.note}` : null,
+      `Open: ${input.loginUrl}`
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    try {
+      const info = await transporter.sendMail({ from, to: input.toEmail, subject, text, html });
+      return (info.accepted?.length ?? 0) > 0
+        ? { delivered: true }
+        : { delivered: false, reason: 'Mail provider did not accept recipient' };
+    } catch (error) {
+      this.logger.error(
+        `Failed to send assignment review email to ${input.toEmail}`,
+        error instanceof Error ? error.stack : undefined
+      );
+      return { delivered: false, reason: 'Email delivery failed' };
+    }
+  }
+
+  async sendClassJoinReviewedEmail(input: ClassJoinReviewedEmailInput): Promise<{ delivered: boolean; reason?: string }> {
+    const transporter = this.getTransporter();
+    if (!transporter) {
+      return { delivered: false, reason: 'SMTP is not configured' };
+    }
+    const from = process.env.SMTP_FROM ?? 'QuizOS <no-reply@quizos.local>';
+    const subject = input.approved ? `Class join approved: ${input.className}` : `Class join request update: ${input.className}`;
+    const statusText = input.approved ? 'approved' : 'rejected';
+    const html = `
+      <div style="font-family:Arial,sans-serif;line-height:1.5;color:#111827">
+        <h2 style="margin-bottom:8px;">Class join ${statusText}</h2>
+        <p>Your request to join <strong>${escapeHtml(input.className)}</strong> (${escapeHtml(input.schoolName)}) was <strong>${statusText}</strong>.</p>
+        <p><a href="${input.loginUrl}" style="display:inline-block;padding:10px 14px;border-radius:8px;background:#0f766e;color:#ffffff;text-decoration:none;">Open QuizOS</a></p>
+      </div>
+    `;
+    const text = [
+      `Class join ${statusText}`,
+      `Class: ${input.className}`,
+      `School: ${input.schoolName}`,
+      `Open: ${input.loginUrl}`
+    ].join('\n');
+
+    try {
+      const info = await transporter.sendMail({ from, to: input.toEmail, subject, text, html });
+      return (info.accepted?.length ?? 0) > 0
+        ? { delivered: true }
+        : { delivered: false, reason: 'Mail provider did not accept recipient' };
+    } catch (error) {
+      this.logger.error(
+        `Failed to send class join review email to ${input.toEmail}`,
+        error instanceof Error ? error.stack : undefined
+      );
       return { delivered: false, reason: 'Email delivery failed' };
     }
   }

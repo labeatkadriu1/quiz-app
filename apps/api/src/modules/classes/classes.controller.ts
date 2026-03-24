@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Headers, Param, Post, UseGuards } from '@nestjs/common';
-import { ClassMemberType } from '@prisma/client';
+import { Body, Controller, Get, Headers, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { ClassMemberType, JoinRequestStatus } from '@prisma/client';
 import { IsBoolean, IsDateString, IsEmail, IsEnum, IsOptional, IsString, IsUUID, MinLength } from 'class-validator';
 import { CurrentUser, type AuthenticatedUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { BillingGuard } from '../billing/billing.guard';
 import { ClassesService } from './classes.service';
 
 class CreateClassDto {
@@ -65,7 +66,7 @@ export class ClassesController {
   constructor(private readonly classesService: ClassesService) {}
 
   @Post()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, BillingGuard)
   create(
     @Headers('x-organization-id') organizationId: string | undefined,
     @Body() body: CreateClassDto,
@@ -82,7 +83,7 @@ export class ClassesController {
   }
 
   @Post(':id/members')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, BillingGuard)
   addMember(
     @Headers('x-organization-id') organizationId: string | undefined,
     @Param('id') classId: string,
@@ -99,7 +100,7 @@ export class ClassesController {
   }
 
   @Get()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, BillingGuard)
   list(
     @Headers('x-organization-id') organizationId: string | undefined,
     @CurrentUser() user: AuthenticatedUser
@@ -111,7 +112,7 @@ export class ClassesController {
   }
 
   @Get('schools')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, BillingGuard)
   listSchools(
     @Headers('x-organization-id') organizationId: string | undefined,
     @CurrentUser() user: AuthenticatedUser
@@ -123,7 +124,7 @@ export class ClassesController {
   }
 
   @Post('schools')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, BillingGuard)
   createSchool(
     @Headers('x-organization-id') organizationId: string | undefined,
     @Body() body: CreateSchoolDto,
@@ -138,7 +139,7 @@ export class ClassesController {
   }
 
   @Post(':id/join-links')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, BillingGuard)
   createJoinLink(
     @Headers('x-organization-id') organizationId: string | undefined,
     @Param('id') classId: string,
@@ -154,21 +155,23 @@ export class ClassesController {
   }
 
   @Get(':id/join-requests')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, BillingGuard)
   listJoinRequests(
     @Headers('x-organization-id') organizationId: string | undefined,
     @Param('id') classId: string,
-    @CurrentUser() user: AuthenticatedUser
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('status') status: JoinRequestStatus | undefined
   ) {
     return this.classesService.listJoinRequests({
       organizationId: organizationId ?? '',
       classId,
-      actorUserId: user.id
+      actorUserId: user.id,
+      status
     });
   }
 
   @Post('join-requests/:id/review')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, BillingGuard)
   reviewJoinRequest(
     @Headers('x-organization-id') organizationId: string | undefined,
     @Param('id') requestId: string,

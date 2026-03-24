@@ -123,6 +123,15 @@ a {
   background: #fff;
 }
 
+.field select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.72rem 0.8rem;
+  font-size: 0.95rem;
+  background: #fff;
+}
+
 .error-text {
   color: #b91c1c;
   font-size: 0.78rem;

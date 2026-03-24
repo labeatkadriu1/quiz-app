@@ -4,6 +4,7 @@ import * as bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'crypto';
 import { AuthService } from '../auth/auth.service';
 import { EmailService } from '../email/email.service';
+import { assertBillingAccess } from '../organizations/plan-limits';
 import { PrismaService } from '../prisma/prisma.service';
 
 export type InviteScope = 'ACTIVE_ORG' | 'SPECIFIC_ORG' | 'ALL_ADMIN_ORGS' | 'ALL_SCHOOL_ORGS';
@@ -48,6 +49,7 @@ export class InvitationsService {
     if (targetOrganizations.length === 0) {
       throw new ForbiddenException('No organizations available for this invite scope');
     }
+    const webUrl = process.env.WEB_URL?.replace(/\/$/, '') ?? 'http://localhost:3001';
 
     const created = await this.prisma.$transaction(async (tx) => {
       const rows: Array<{
@@ -60,6 +62,19 @@ export class InvitationsService {
       }> = [];
 
       for (const org of targetOrganizations) {
+        const billing = await assertBillingAccess(this.prisma, org.id);
+        const activeMemberCount = await tx.organizationMember.count({
+          where: {
+            organizationId: org.id,
+            status: MemberStatus.ACTIVE
+          }
+        });
+        if (activeMemberCount >= billing.limits.memberLimit) {
+          throw new BadRequestException(
+            `Member limit reached for ${org.name} (${billing.limits.memberLimit}). Upgrade plan to invite more users.`
+          );
+        }
+
         const role = await this.ensureRole(tx, org.id, input.roleKey);
         const inviteToken = randomBytes(24).toString('hex');
         const tokenHash = createHash('sha256').update(inviteToken).digest('hex');
@@ -102,7 +117,6 @@ export class InvitationsService {
     );
     const deliveredCount = emailResults.filter((result) => result.delivered).length;
 
-    const webUrl = process.env.WEB_URL?.replace(/\/$/, '') ?? 'http://localhost:3001';
     return {
       scope: input.scope,
       email: normalizedEmail,

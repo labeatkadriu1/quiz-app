@@ -1,5 +1,5 @@
-import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, UseGuards } from '@nestjs/common';
-import { AssignmentScopeType, QuestionType, QuizVisibility } from '@prisma/client';
+import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { AssignmentScopeType, JoinRequestStatus, QuestionType, QuizVisibility } from '@prisma/client';
 import {
   ArrayMinSize,
   IsArray,
@@ -19,6 +19,7 @@ import {
 import { Type } from 'class-transformer';
 import { CurrentUser, type AuthenticatedUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { BillingGuard } from '../billing/billing.guard';
 import { QuizzesService } from './quizzes.service';
 
 class CreateQuizDto {
@@ -398,8 +399,29 @@ class ReviewAssignmentRequestDto {
   note?: string;
 }
 
+class EmbedSettingsDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  allowlistDomains?: string[];
+}
+
+class LeadWebhookDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @IsString()
+  url?: string;
+}
+
 @Controller('quizzes')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, BillingGuard)
 export class QuizzesController {
   constructor(private readonly quizzesService: QuizzesService) {}
 
@@ -718,6 +740,19 @@ export class QuizzesController {
     });
   }
 
+  @Get('assignment-requests/inbox')
+  listAssignmentRequestsInbox(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('status') status: JoinRequestStatus | undefined
+  ) {
+    return this.quizzesService.listAssignmentRequestsInbox({
+      organizationId: organizationId ?? '',
+      actorUserId: user.id,
+      status
+    });
+  }
+
   @Post(':id/assignments/:assignmentId/requests/:requestId/approve')
   approveAssignmentRequest(
     @Headers('x-organization-id') organizationId: string | undefined,
@@ -829,6 +864,90 @@ export class QuizzesController {
     @CurrentUser() user: AuthenticatedUser
   ) {
     return this.quizzesService.listEndFormSubmissions({
+      organizationId: organizationId ?? '',
+      actorUserId: user.id,
+      quizId
+    });
+  }
+
+  @Get(':id/end-form/submissions/export')
+  exportEndFormSubmissions(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @Param('id') quizId: string,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.quizzesService.exportEndFormSubmissionsCsv({
+      organizationId: organizationId ?? '',
+      actorUserId: user.id,
+      quizId
+    });
+  }
+
+  @Patch(':id/embed-settings')
+  configureEmbedSettings(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @Param('id') quizId: string,
+    @Body() body: EmbedSettingsDto,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.quizzesService.configureEmbedSettings({
+      organizationId: organizationId ?? '',
+      actorUserId: user.id,
+      quizId,
+      enabled: body.enabled,
+      allowlistDomains: body.allowlistDomains
+    });
+  }
+
+  @Get(':id/embed-settings')
+  getEmbedSettings(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @Param('id') quizId: string,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.quizzesService.getEmbedSettings({
+      organizationId: organizationId ?? '',
+      actorUserId: user.id,
+      quizId
+    });
+  }
+
+  @Patch(':id/lead-webhook')
+  configureLeadWebhook(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @Param('id') quizId: string,
+    @Body() body: LeadWebhookDto,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.quizzesService.configureLeadWebhook({
+      organizationId: organizationId ?? '',
+      actorUserId: user.id,
+      quizId,
+      enabled: body.enabled,
+      url: body.url
+    });
+  }
+
+  @Get(':id/lead-webhook')
+  getLeadWebhook(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @Param('id') quizId: string,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.quizzesService.getLeadWebhook({
+      organizationId: organizationId ?? '',
+      actorUserId: user.id,
+      quizId
+    });
+  }
+
+  @Get(':id/funnel')
+  getQuizFunnel(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @Param('id') quizId: string,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.quizzesService.getQuizFunnel({
       organizationId: organizationId ?? '',
       actorUserId: user.id,
       quizId

@@ -14,6 +14,7 @@
     "test": "npm run test -ws --if-present",
     "db:generate": "npm run prisma:generate -w @quiz/api",
     "db:migrate": "npm run prisma:migrate -w @quiz/api",
+    "seed:demo": "npm run prisma:seed -w @quiz/api",
     "heroku-postbuild": "npm run build -w @quiz/shared && npm run prisma:generate -w @quiz/api && npm run build -w @quiz/api"
   },
   "engines": {

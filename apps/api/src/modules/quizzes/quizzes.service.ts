@@ -1,6 +1,8 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   AssignmentScopeType,
+  ClassMemberType,
+  JoinRequestStatus,
   MemberStatus,
   Prisma,
   QuestionType,
@@ -9,11 +11,16 @@ import {
 } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
+import { EmailService } from '../email/email.service';
+import { assertBillingAccess } from '../organizations/plan-limits';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class QuizzesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly emailService: EmailService
+  ) {}
 
   async createQuiz(input: {
     organizationId: string;
@@ -29,6 +36,16 @@ export class QuizzesService {
     contentType?: string;
   }) {
     await this.assertActiveMembership(input.organizationId, input.ownerUserId);
+    const billing = await assertBillingAccess(this.prisma, input.organizationId);
+
+    const existingQuizCount = await this.prisma.quiz.count({
+      where: { organizationId: input.organizationId }
+    });
+    if (existingQuizCount >= billing.limits.quizLimit) {
+      throw new BadRequestException(
+        `Quiz limit reached (${billing.limits.quizLimit}) for current plan. Upgrade to create more quizzes.`
+      );
+    }
 
     return this.prisma.quiz.create({
       data: {
@@ -139,6 +156,7 @@ export class QuizzesService {
     targets: Array<{ targetType: string; userId?: string; classId?: string; schoolId?: string }>;
   }) {
     await this.assertCanEditQuiz(input.organizationId, input.quizId, input.actorUserId);
+    await assertBillingAccess(this.prisma, input.organizationId);
     const normalizedTargets = this.normalizeAssignmentTargets(input.scopeType, input.targets);
     const requestAccessToken =
       input.scopeType === AssignmentScopeType.REQUEST_LINK ? randomBytes(16).toString('hex') : null;
@@ -240,6 +258,98 @@ export class QuizzesService {
     });
   }
 
+  async listAssignmentRequestsInbox(input: {
+    organizationId: string;
+    actorUserId: string;
+    status?: JoinRequestStatus;
+  }) {
+    await this.assertActiveMembership(input.organizationId, input.actorUserId);
+
+    const actorMembership = await this.prisma.organizationMember.findUnique({
+      where: {
+        organizationId_userId: {
+          organizationId: input.organizationId,
+          userId: input.actorUserId
+        }
+      },
+      include: {
+        role: true
+      }
+    });
+    if (!actorMembership?.role?.key) {
+      throw new ForbiddenException('Role not found');
+    }
+
+    const isAdmin = actorMembership.role.key.includes('ADMIN');
+    const managedClassIds = isAdmin
+      ? []
+      : (
+          await this.prisma.classMembership.findMany({
+            where: {
+              organizationId: input.organizationId,
+              userId: input.actorUserId,
+              memberType: ClassMemberType.TEACHER
+            },
+            select: { classId: true }
+          })
+        ).map((item) => item.classId);
+
+    const whereForTeacher = !isAdmin
+      ? {
+          assignment: {
+            OR: [
+              {
+                assignedById: input.actorUserId
+              },
+              {
+                targets: {
+                  some: {
+                    classId: {
+                      in: managedClassIds
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      : {};
+
+    return this.prisma.assignmentAccessRequest.findMany({
+      where: {
+        organizationId: input.organizationId,
+        ...(input.status ? { status: input.status } : {}),
+        ...whereForTeacher
+      },
+      include: {
+        quiz: {
+          select: {
+            id: true,
+            title: true
+          }
+        },
+        assignment: {
+          select: {
+            id: true,
+            scopeType: true,
+            createdAt: true
+          }
+        },
+        reviewedBy: {
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true
+          }
+        }
+      },
+      orderBy: {
+        requestedAt: 'desc'
+      }
+    });
+  }
+
   async reviewAssignmentRequest(input: {
     organizationId: string;
     quizId: string;
@@ -249,14 +359,23 @@ export class QuizzesService {
     action: 'APPROVE' | 'REJECT';
     note?: string;
   }) {
-    await this.assertCanEditQuiz(input.organizationId, input.quizId, input.actorUserId);
-
     const request = await this.prisma.assignmentAccessRequest.findFirst({
       where: {
         id: input.requestId,
         assignmentId: input.assignmentId,
         quizId: input.quizId,
         organizationId: input.organizationId
+      },
+      include: {
+        assignment: {
+          include: {
+            targets: {
+              select: {
+                classId: true
+              }
+            }
+          }
+        }
       }
     });
     if (!request) {
@@ -265,16 +384,124 @@ export class QuizzesService {
     if (request.status !== 'PENDING') {
       throw new BadRequestException('Request has already been reviewed');
     }
+    await this.assertCanReviewAssignmentRequest(
+      input.organizationId,
+      input.actorUserId,
+      request.assignment.assignedById,
+      request.assignment.targets.map((item) => item.classId).filter((item): item is string => Boolean(item))
+    );
+    await assertBillingAccess(this.prisma, input.organizationId);
 
-    return this.prisma.assignmentAccessRequest.update({
-      where: { id: request.id },
-      data: {
-        status: input.action === 'APPROVE' ? 'APPROVED' : 'REJECTED',
-        reviewedAt: new Date(),
-        reviewedById: input.actorUserId,
-        reviewedNote: input.note?.trim() || null
+    const updated = await this.prisma.$transaction(async (tx) => {
+      let ensuredUserId: string | null = null;
+
+      if (input.action === 'APPROVE') {
+        const [firstName, ...rest] = request.name.trim().split(/\s+/);
+        const lastName = rest.join(' ').trim();
+
+        let user = await tx.user.findUnique({
+          where: { email: request.email }
+        });
+        if (!user) {
+          user = await tx.user.create({
+            data: {
+              email: request.email,
+              firstName: firstName || null,
+              lastName: lastName || null,
+              passwordHash: await bcrypt.hash(randomBytes(24).toString('hex'), 10),
+              status: 'ACTIVE'
+            }
+          });
+        }
+        ensuredUserId = user.id;
+
+        const studentRole = await this.ensureOrganizationRole(tx, input.organizationId, 'STUDENT', 'Student');
+        await tx.organizationMember.upsert({
+          where: {
+            organizationId_userId: {
+              organizationId: input.organizationId,
+              userId: user.id
+            }
+          },
+          update: {
+            status: MemberStatus.ACTIVE,
+            roleId: studentRole.id
+          },
+          create: {
+            organizationId: input.organizationId,
+            userId: user.id,
+            roleId: studentRole.id,
+            status: MemberStatus.ACTIVE
+          }
+        });
+
+        const existingTarget = await tx.quizAssignmentTarget.findFirst({
+          where: {
+            assignmentId: request.assignmentId,
+            userId: user.id,
+            targetType: 'USER'
+          }
+        });
+        if (!existingTarget) {
+          await tx.quizAssignmentTarget.create({
+            data: {
+              assignmentId: request.assignmentId,
+              targetType: 'USER',
+              userId: user.id
+            }
+          });
+        }
       }
+
+      const reviewed = await tx.assignmentAccessRequest.update({
+        where: { id: request.id },
+        data: {
+          status: input.action === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+          reviewedAt: new Date(),
+          reviewedById: input.actorUserId,
+          reviewedNote: input.note?.trim() || null
+        }
+      });
+
+      await tx.auditLog.create({
+        data: {
+          organizationId: input.organizationId,
+          actorUserId: input.actorUserId,
+          action: input.action === 'APPROVE' ? 'ASSIGNMENT_REQUEST_APPROVED' : 'ASSIGNMENT_REQUEST_REJECTED',
+          resourceType: 'ASSIGNMENT_ACCESS_REQUEST',
+          resourceId: request.id,
+          payload: {
+            requestId: request.id,
+            assignmentId: request.assignmentId,
+            quizId: request.quizId,
+            email: request.email,
+            ensuredUserId
+          } as Prisma.InputJsonValue
+        }
+      });
+
+      return reviewed;
     });
+
+    const org = await this.prisma.organization.findUnique({
+      where: { id: input.organizationId },
+      select: { name: true }
+    });
+    const quiz = await this.prisma.quiz.findUnique({
+      where: { id: input.quizId },
+      select: { id: true, title: true }
+    });
+
+    await this.emailService.sendAssignmentRequestReviewedEmail({
+      toEmail: request.email,
+      organizationName: org?.name ?? 'QuizOS Organization',
+      quizTitle: quiz?.title ?? 'Quiz',
+      approved: input.action === 'APPROVE',
+      note: input.note?.trim() || null,
+      loginUrl: `${process.env.WEB_URL?.replace(/\/$/, '') ?? 'http://localhost:3001'}/login`
+    });
+
+    return updated;
   }
 
   async updateQuestion(input: {
@@ -606,6 +833,214 @@ export class QuizzesService {
           }
         : null
     }));
+  }
+
+  async exportEndFormSubmissionsCsv(input: { organizationId: string; actorUserId: string; quizId: string }) {
+    const rows = await this.listEndFormSubmissions(input);
+    const headers = ['created_at', 'name', 'email', 'phone', 'attempt_id', 'user_id'];
+    const csvRows = [
+      headers.join(','),
+      ...rows.map((row) =>
+        [
+          this.csvCell(new Date(row.createdAt).toISOString()),
+          this.csvCell(row.name ?? ''),
+          this.csvCell(row.email ?? ''),
+          this.csvCell(row.phone ?? ''),
+          this.csvCell(row.attemptId ?? ''),
+          this.csvCell(row.user?.id ?? '')
+        ].join(',')
+      )
+    ];
+    return {
+      filename: `quiz-${input.quizId}-leads.csv`,
+      csv: csvRows.join('\n')
+    };
+  }
+
+  async configureEmbedSettings(input: {
+    organizationId: string;
+    actorUserId: string;
+    quizId: string;
+    enabled?: boolean;
+    allowlistDomains?: string[];
+  }) {
+    await this.assertCanEditQuiz(input.organizationId, input.quizId, input.actorUserId);
+    const quiz = await this.prisma.quiz.findUnique({
+      where: { id: input.quizId },
+      select: { themeConfig: true }
+    });
+    if (!quiz) {
+      throw new NotFoundException('Quiz not found');
+    }
+    const theme = quiz.themeConfig && typeof quiz.themeConfig === 'object'
+      ? (quiz.themeConfig as Record<string, unknown>)
+      : {};
+    const allowlist = (input.allowlistDomains ?? [])
+      .map((item) => this.normalizeDomain(item))
+      .filter((item): item is string => Boolean(item));
+
+    const updated = await this.prisma.quiz.update({
+      where: { id: input.quizId },
+      data: {
+        themeConfig: {
+          ...theme,
+          embedSettings: {
+            enabled: input.enabled ?? true,
+            allowlistDomains: allowlist
+          }
+        } as Prisma.InputJsonValue
+      },
+      select: {
+        id: true,
+        themeConfig: true
+      }
+    });
+
+    return {
+      quizId: updated.id,
+      embedSettings: this.toEmbedSettings(updated.themeConfig)
+    };
+  }
+
+  async getEmbedSettings(input: { organizationId: string; actorUserId: string; quizId: string }) {
+    await this.assertCanEditQuiz(input.organizationId, input.quizId, input.actorUserId);
+    const quiz = await this.prisma.quiz.findUnique({
+      where: { id: input.quizId },
+      select: {
+        id: true,
+        themeConfig: true
+      }
+    });
+    if (!quiz) {
+      throw new NotFoundException('Quiz not found');
+    }
+    return {
+      quizId: quiz.id,
+      embedSettings: this.toEmbedSettings(quiz.themeConfig)
+    };
+  }
+
+  async configureLeadWebhook(input: {
+    organizationId: string;
+    actorUserId: string;
+    quizId: string;
+    enabled?: boolean;
+    url?: string;
+  }) {
+    await this.assertCanEditQuiz(input.organizationId, input.quizId, input.actorUserId);
+    const quiz = await this.prisma.quiz.findUnique({
+      where: { id: input.quizId },
+      select: { themeConfig: true }
+    });
+    if (!quiz) {
+      throw new NotFoundException('Quiz not found');
+    }
+
+    const theme = quiz.themeConfig && typeof quiz.themeConfig === 'object'
+      ? (quiz.themeConfig as Record<string, unknown>)
+      : {};
+    const webhookUrl = input.url?.trim() || '';
+    if (webhookUrl) {
+      // eslint-disable-next-line no-new
+      new URL(webhookUrl);
+    }
+
+    const updated = await this.prisma.quiz.update({
+      where: { id: input.quizId },
+      data: {
+        themeConfig: {
+          ...theme,
+          leadWebhook: {
+            enabled: input.enabled ?? true,
+            url: webhookUrl
+          }
+        } as Prisma.InputJsonValue
+      },
+      select: {
+        id: true,
+        themeConfig: true
+      }
+    });
+
+    return {
+      quizId: updated.id,
+      leadWebhook: this.toLeadWebhookConfig(updated.themeConfig)
+    };
+  }
+
+  async getLeadWebhook(input: { organizationId: string; actorUserId: string; quizId: string }) {
+    await this.assertCanEditQuiz(input.organizationId, input.quizId, input.actorUserId);
+    const quiz = await this.prisma.quiz.findUnique({
+      where: { id: input.quizId },
+      select: {
+        id: true,
+        themeConfig: true
+      }
+    });
+    if (!quiz) {
+      throw new NotFoundException('Quiz not found');
+    }
+    return {
+      quizId: quiz.id,
+      leadWebhook: this.toLeadWebhookConfig(quiz.themeConfig)
+    };
+  }
+
+  async getQuizFunnel(input: { organizationId: string; actorUserId: string; quizId: string }) {
+    await this.assertCanEditQuiz(input.organizationId, input.quizId, input.actorUserId);
+    const [views, starts, submits, leads] = await Promise.all([
+      this.prisma.auditLog.count({
+        where: {
+          organizationId: input.organizationId,
+          resourceType: 'QUIZ',
+          resourceId: input.quizId,
+          action: 'PUBLIC_QUIZ_VIEW'
+        }
+      }),
+      this.prisma.auditLog.count({
+        where: {
+          organizationId: input.organizationId,
+          resourceType: 'QUIZ',
+          resourceId: input.quizId,
+          action: 'PUBLIC_QUIZ_START'
+        }
+      }),
+      this.prisma.auditLog.count({
+        where: {
+          organizationId: input.organizationId,
+          resourceType: 'QUIZ',
+          resourceId: input.quizId,
+          action: 'PUBLIC_QUIZ_SUBMIT'
+        }
+      }),
+      this.prisma.auditLog.count({
+        where: {
+          organizationId: input.organizationId,
+          resourceType: 'QUIZ',
+          resourceId: input.quizId,
+          action: 'PUBLIC_CTA_SUBMIT'
+        }
+      })
+    ]);
+
+    const startRate = views > 0 ? Number(((starts / views) * 100).toFixed(2)) : 0;
+    const completionRate = starts > 0 ? Number(((submits / starts) * 100).toFixed(2)) : 0;
+    const ctaRate = submits > 0 ? Number(((leads / submits) * 100).toFixed(2)) : 0;
+
+    return {
+      quizId: input.quizId,
+      funnel: {
+        views,
+        starts,
+        submits,
+        ctaSubmissions: leads
+      },
+      rates: {
+        startRate,
+        completionRate,
+        ctaRate
+      }
+    };
   }
 
   async listQuizzesForOrg(input: { organizationId: string; actorUserId: string }) {
@@ -1263,6 +1698,20 @@ export class QuizzesService {
     return `${webUrl}/request-assignment/${token}`;
   }
 
+  private csvCell(value: string): string {
+    const escaped = value.replace(/"/g, '""');
+    return `"${escaped}"`;
+  }
+
+  private normalizeDomain(value: string): string | null {
+    const trimmed = value.trim().toLowerCase();
+    if (!trimmed) {
+      return null;
+    }
+    const normalized = trimmed.replace(/^https?:\/\//, '').split('/')[0]?.trim();
+    return normalized || null;
+  }
+
   private toEndFormResponse(quiz: {
     id: string;
     endFormEnabled: boolean;
@@ -1356,6 +1805,102 @@ export class QuizzesService {
     if (!membership || membership.status !== MemberStatus.ACTIVE) {
       throw new ForbiddenException('Active organization membership required');
     }
+  }
+
+  private async assertCanReviewAssignmentRequest(
+    organizationId: string,
+    actorUserId: string,
+    assignedById: string,
+    classIds: string[]
+  ): Promise<void> {
+    const membership = await this.prisma.organizationMember.findUnique({
+      where: {
+        organizationId_userId: {
+          organizationId,
+          userId: actorUserId
+        }
+      },
+      include: {
+        role: true
+      }
+    });
+    if (!membership || membership.status !== MemberStatus.ACTIVE) {
+      throw new ForbiddenException('Active organization membership required');
+    }
+    if (membership.role?.key?.includes('ADMIN')) {
+      return;
+    }
+    if (assignedById === actorUserId) {
+      return;
+    }
+    if (classIds.length > 0) {
+      const teacherClass = await this.prisma.classMembership.findFirst({
+        where: {
+          organizationId,
+          userId: actorUserId,
+          memberType: ClassMemberType.TEACHER,
+          classId: {
+            in: classIds
+          }
+        }
+      });
+      if (teacherClass) {
+        return;
+      }
+    }
+    throw new ForbiddenException('Not allowed to review this assignment request');
+  }
+
+  private toEmbedSettings(themeConfig: unknown): { enabled: boolean; allowlistDomains: string[] } {
+    const raw = themeConfig && typeof themeConfig === 'object' ? (themeConfig as Record<string, unknown>) : {};
+    const source =
+      raw.embedSettings && typeof raw.embedSettings === 'object'
+        ? (raw.embedSettings as Record<string, unknown>)
+        : {};
+    return {
+      enabled: typeof source.enabled === 'boolean' ? source.enabled : false,
+      allowlistDomains: Array.isArray(source.allowlistDomains)
+        ? source.allowlistDomains.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+        : []
+    };
+  }
+
+  private toLeadWebhookConfig(themeConfig: unknown): { enabled: boolean; url: string } {
+    const raw = themeConfig && typeof themeConfig === 'object' ? (themeConfig as Record<string, unknown>) : {};
+    const source =
+      raw.leadWebhook && typeof raw.leadWebhook === 'object'
+        ? (raw.leadWebhook as Record<string, unknown>)
+        : {};
+    return {
+      enabled: typeof source.enabled === 'boolean' ? source.enabled : false,
+      url: typeof source.url === 'string' ? source.url : ''
+    };
+  }
+
+  private async ensureOrganizationRole(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    key: string,
+    name: string
+  ) {
+    const existing = await tx.role.findUnique({
+      where: {
+        organizationId_key: {
+          organizationId,
+          key
+        }
+      }
+    });
+    if (existing) {
+      return existing;
+    }
+    return tx.role.create({
+      data: {
+        organizationId,
+        key,
+        name
+      }
+    });
   }
 
   private toQuizTheme(themeConfig: unknown) {

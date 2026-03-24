@@ -8,6 +8,7 @@ import {
   AssignmentScopeType,
   AttemptStatus,
   ClassMemberType,
+  JoinRequestStatus,
   MemberStatus,
   Prisma,
   QuestionType,
@@ -15,6 +16,7 @@ import {
   QuizVisibility
 } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import { assertBillingAccess } from '../organizations/plan-limits';
 import { PrismaService } from '../prisma/prisma.service';
 
 interface AnswerInput {
@@ -27,6 +29,7 @@ export class AttemptsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async startAttempt(input: { organizationId: string; quizId: string; userId: string }) {
+    const billing = await assertBillingAccess(this.prisma, input.organizationId);
     const membership = await this.assertMembership(input.organizationId, input.userId);
     if (!membership) {
       throw new ForbiddenException('Active organization membership required');
@@ -66,6 +69,18 @@ export class AttemptsService {
     const limit = assignment?.attemptLimit ?? quiz.attemptLimitDefault;
     if (limit && attemptsUsed >= limit) {
       throw new ForbiddenException('Attempt limit reached');
+    }
+
+    const monthAttempts = await this.prisma.quizAttempt.count({
+      where: {
+        organizationId: input.organizationId,
+        createdAt: {
+          gte: this.monthStart()
+        }
+      }
+    });
+    if (monthAttempts >= billing.limits.monthlyAttemptLimit) {
+      throw new ForbiddenException('Monthly attempt limit reached for current plan');
     }
 
     return this.prisma.quizAttempt.create({
@@ -234,7 +249,13 @@ export class AttemptsService {
     return result;
   }
 
-  async startPublicAttempt(input: { quizId: string; token: string; password?: string; email?: string }) {
+  async startPublicAttempt(input: {
+    quizId: string;
+    token: string;
+    password?: string;
+    email?: string;
+    sourceDomain?: string;
+  }) {
     const quiz = await this.prisma.quiz.findUnique({
       where: { id: input.quizId },
       include: {
@@ -247,6 +268,20 @@ export class AttemptsService {
     if (!quiz.publicAccessEnabled || !quiz.publicAccessToken || quiz.publicAccessToken !== input.token) {
       throw new ForbiddenException('Public access is not enabled for this quiz');
     }
+
+    const billing = await assertBillingAccess(this.prisma, quiz.organizationId);
+    const monthAttempts = await this.prisma.quizAttempt.count({
+      where: {
+        organizationId: quiz.organizationId,
+        createdAt: {
+          gte: this.monthStart()
+        }
+      }
+    });
+    if (monthAttempts >= billing.limits.monthlyAttemptLimit) {
+      throw new ForbiddenException('Monthly attempt limit reached for this organization');
+    }
+    this.assertEmbedDomainAllowed(quiz.themeConfig, input.sourceDomain);
 
     const mode = (quiz.publicAccessMode ?? 'PUBLIC_LINK') as 'PUBLIC_LINK' | 'APPROVAL' | 'PASSWORD';
     if (mode === 'PASSWORD') {
@@ -269,13 +304,25 @@ export class AttemptsService {
       }
     }
 
-    return this.prisma.quizAttempt.create({
+    const created = await this.prisma.quizAttempt.create({
       data: {
         organizationId: quiz.organizationId,
         quizId: quiz.id,
         status: AttemptStatus.IN_PROGRESS
       }
     });
+    await this.prisma.auditLog.create({
+      data: {
+        organizationId: quiz.organizationId,
+        action: 'PUBLIC_QUIZ_START',
+        resourceType: 'QUIZ',
+        resourceId: quiz.id,
+        payload: {
+          sourceDomain: input.sourceDomain ?? null
+        }
+      }
+    });
+    return created;
   }
 
   async savePublicAnswer(input: { attemptId: string; answer: AnswerInput }) {
@@ -422,6 +469,18 @@ export class AttemptsService {
           }
         });
       }
+
+      await tx.auditLog.create({
+        data: {
+          organizationId: attempt.organizationId,
+          action: 'PUBLIC_QUIZ_SUBMIT',
+          resourceType: 'QUIZ',
+          resourceId: attempt.quizId,
+          payload: {
+            attemptId: attempt.id
+          }
+        }
+      });
     });
 
     return this.getPublicResult({ attemptId: attempt.id });
@@ -509,7 +568,7 @@ export class AttemptsService {
     };
   }
 
-  async getPublicQuiz(input: { quizId: string; token: string }) {
+  async getPublicQuiz(input: { quizId: string; token: string; sourceDomain?: string }) {
     const quiz = await this.prisma.quiz.findUnique({
       where: { id: input.quizId },
       include: {
@@ -529,6 +588,18 @@ export class AttemptsService {
     if (!quiz.publicAccessEnabled || !quiz.publicAccessToken || quiz.publicAccessToken !== input.token) {
       throw new ForbiddenException('Public access is not enabled for this quiz');
     }
+    this.assertEmbedDomainAllowed(quiz.themeConfig, input.sourceDomain);
+    await this.prisma.auditLog.create({
+      data: {
+        organizationId: quiz.organizationId,
+        action: 'PUBLIC_QUIZ_VIEW',
+        resourceType: 'QUIZ',
+        resourceId: quiz.id,
+        payload: {
+          sourceDomain: input.sourceDomain ?? null
+        }
+      }
+    });
 
     return {
       id: quiz.id,
@@ -656,6 +727,7 @@ export class AttemptsService {
     if (!assignment || assignment.quiz.status !== QuizStatus.PUBLISHED) {
       throw new NotFoundException('Assignment request link not found');
     }
+    await assertBillingAccess(this.prisma, assignment.organizationId);
 
     const existing = await this.prisma.assignmentAccessRequest.findFirst({
       where: {
@@ -750,6 +822,37 @@ export class AttemptsService {
         payload: values as Prisma.InputJsonValue
       }
     });
+    await this.prisma.auditLog.create({
+      data: {
+        organizationId: attempt.quiz.organizationId,
+        action: 'PUBLIC_CTA_SUBMIT',
+        resourceType: 'QUIZ',
+        resourceId: attempt.quiz.id,
+        payload: {
+          attemptId: attempt.id
+        }
+      }
+    });
+
+    const webhook = this.toLeadWebhookConfig(await this.prisma.quiz.findUnique({
+      where: { id: attempt.quiz.id },
+      select: { themeConfig: true }
+    }).then((quiz) => quiz?.themeConfig ?? null));
+    if (webhook.enabled && webhook.url) {
+      await this.prisma.auditLog.create({
+        data: {
+          organizationId: attempt.quiz.organizationId,
+          action: 'LEAD_WEBHOOK_QUEUED',
+          resourceType: 'QUIZ',
+          resourceId: attempt.quiz.id,
+          payload: {
+            webhookUrl: webhook.url,
+            leadSubmissionId: saved.id,
+            attemptId: attempt.id
+          }
+        }
+      });
+    }
 
     return {
       id: saved.id,
@@ -868,6 +971,10 @@ export class AttemptsService {
       }
     });
     const classIds = new Set(classMemberships.map((membership) => membership.classId));
+    const user = await this.prisma.user.findUnique({
+      where: { id: input.userId },
+      select: { email: true }
+    });
 
     const now = new Date();
     for (const assignment of assignments) {
@@ -884,6 +991,19 @@ export class AttemptsService {
         assignment.scopeType === AssignmentScopeType.SCHOOL_WIDE
       ) {
         return assignment;
+      }
+
+      if (assignment.scopeType === AssignmentScopeType.REQUEST_LINK) {
+        const approvedRequest = await this.prisma.assignmentAccessRequest.findFirst({
+          where: {
+            assignmentId: assignment.id,
+            email: user?.email ?? '',
+            status: JoinRequestStatus.APPROVED
+          }
+        });
+        if (approvedRequest) {
+          return assignment;
+        }
       }
 
       const hasDirectTarget = assignment.targets.some((target) => target.userId === input.userId);
@@ -997,5 +1117,42 @@ export class AttemptsService {
       introHtml: getString('introHtml', ''),
       coverImageUrl: getString('coverImageUrl', '')
     };
+  }
+
+  private assertEmbedDomainAllowed(themeConfig: unknown, sourceDomain?: string): void {
+    const raw = themeConfig && typeof themeConfig === 'object' ? (themeConfig as Record<string, unknown>) : {};
+    const embed = raw.embedSettings && typeof raw.embedSettings === 'object'
+      ? (raw.embedSettings as Record<string, unknown>)
+      : null;
+    if (!embed || embed.enabled !== true) {
+      return;
+    }
+    const allowlist = Array.isArray(embed.allowlistDomains)
+      ? embed.allowlistDomains.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      : [];
+    if (allowlist.length === 0) {
+      return;
+    }
+    const source = (sourceDomain ?? '').trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0];
+    if (!source || !allowlist.includes(source)) {
+      throw new ForbiddenException('Source domain is not allowed for this embedded quiz');
+    }
+  }
+
+  private toLeadWebhookConfig(themeConfig: unknown): { enabled: boolean; url: string } {
+    const raw = themeConfig && typeof themeConfig === 'object' ? (themeConfig as Record<string, unknown>) : {};
+    const source =
+      raw.leadWebhook && typeof raw.leadWebhook === 'object'
+        ? (raw.leadWebhook as Record<string, unknown>)
+        : {};
+    return {
+      enabled: source.enabled === true,
+      url: typeof source.url === 'string' ? source.url : ''
+    };
+  }
+
+  private monthStart(): Date {
+    const now = new Date();
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
   }
 }

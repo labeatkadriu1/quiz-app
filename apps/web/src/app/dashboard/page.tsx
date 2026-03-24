@@ -43,6 +43,29 @@ interface InvitationItem {
   role?: { key: string; name: string } | null;
 }
 
+interface PlanOption {
+  code: string;
+  name: string;
+  priceMonthly: number;
+  description: string;
+  limits?: {
+    memberLimit: number;
+    quizLimit: number;
+    monthlyAttemptLimit: number;
+  };
+}
+
+interface ProductPlanGroup {
+  productKey: 'SCHOOL' | 'PUBLISHER';
+  title: string;
+  plans: PlanOption[];
+}
+
+interface PlansPayload {
+  trialDays: number;
+  products: ProductPlanGroup[];
+}
+
 const ORG_TYPE_OPTIONS: Array<{ value: OrganizationType; label: string }> = [
   { value: 'COMPANY', label: 'Company' },
   { value: 'SCHOOL', label: 'School' },
@@ -74,6 +97,10 @@ export default function DashboardPage(): JSX.Element {
   const [organizationName, setOrganizationName] = useState('');
   const [organizationType, setOrganizationType] = useState<OrganizationType>('COMPANY');
   const [createError, setCreateError] = useState<string | null>(null);
+  const [plans, setPlans] = useState<PlansPayload | null>(null);
+  const [selectedPlanCode, setSelectedPlanCode] = useState<string>('');
+  const [redeemCode, setRedeemCode] = useState('');
+  const [redeemInfo, setRedeemInfo] = useState<string | null>(null);
 
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRoleKey, setInviteRoleKey] = useState<(typeof INVITE_ROLE_OPTIONS)[number]>('ORGANIZATION_ADMIN');
@@ -107,6 +134,18 @@ export default function DashboardPage(): JSX.Element {
     [invitations]
   );
   const activeRoleName = activeMembership?.role?.name ?? 'Member';
+  const isSuperAdmin = (profile?.email ?? '').trim().toLowerCase() === 'kadriu84@gmail.com';
+  const currentTypePlans = useMemo(() => {
+    if (!plans) {
+      return [] as PlanOption[];
+    }
+    const group = plans.products.find((item) => item.productKey === thisProductKey(organizationType));
+    return group?.plans ?? [];
+  }, [plans, organizationType]);
+  const selectedPlan = useMemo(
+    () => currentTypePlans.find((item) => item.code === selectedPlanCode) ?? null,
+    [currentTypePlans, selectedPlanCode]
+  );
 
   useEffect(() => {
     async function bootstrap(): Promise<void> {
@@ -125,6 +164,10 @@ export default function DashboardPage(): JSX.Element {
             headers: { Authorization: `Bearer ${accessToken}` }
           })
         ]);
+        const plansRes = await fetch(`${API_BASE}/organizations/plans`, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        const plansPayload = (await plansRes.json()) as PlansPayload;
 
         const profilePayload = (await profileRes.json()) as MeResponse;
         const orgsPayload = (await orgsRes.json()) as OrganizationMembership[];
@@ -135,6 +178,19 @@ export default function DashboardPage(): JSX.Element {
 
         setProfile(profilePayload.user);
         setOrganizations(Array.isArray(orgsPayload) ? orgsPayload : []);
+        if (plansRes.ok && Array.isArray(plansPayload.products)) {
+          setPlans(plansPayload);
+          const initialGroup = plansPayload.products.find((group) =>
+            thisProductKey(organizationType) === group.productKey
+          );
+          if (initialGroup?.plans?.[0]?.code) {
+            setSelectedPlanCode(initialGroup.plans[0].code);
+          }
+        }
+        const signupCode = localStorage.getItem('quiz_signup_redeem_code');
+        if (signupCode && signupCode.trim()) {
+          setRedeemCode(signupCode.trim().toUpperCase());
+        }
 
         const persistedOrg = localStorage.getItem('quiz_active_org_id');
         const firstOrg = Array.isArray(orgsPayload) ? orgsPayload[0]?.organization.id : undefined;
@@ -163,6 +219,21 @@ export default function DashboardPage(): JSX.Element {
       setInviteSpecificOrganizationId(adminOrganizations[0].organization.id);
     }
   }, [adminOrganizations, inviteSpecificOrganizationId]);
+
+  useEffect(() => {
+    if (!plans) {
+      return;
+    }
+    const group = plans.products.find((item) => item.productKey === thisProductKey(organizationType));
+    if (!group || group.plans.length === 0) {
+      setSelectedPlanCode('');
+      return;
+    }
+    const exists = group.plans.some((plan) => plan.code === selectedPlanCode);
+    if (!exists) {
+      setSelectedPlanCode(group.plans[0].code);
+    }
+  }, [organizationType, plans, selectedPlanCode]);
 
   function logout(): void {
     localStorage.removeItem('quiz_access_token');
@@ -193,10 +264,15 @@ export default function DashboardPage(): JSX.Element {
   async function createOrganization(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     setCreateError(null);
+    setRedeemInfo(null);
 
     const trimmedName = organizationName.trim();
     if (trimmedName.length < 2) {
       setCreateError('Organization name must be at least 2 characters.');
+      return;
+    }
+    if (!selectedPlanCode) {
+      setCreateError('Select a plan to continue.');
       return;
     }
 
@@ -216,11 +292,22 @@ export default function DashboardPage(): JSX.Element {
         },
         body: JSON.stringify({
           name: trimmedName,
-          type: organizationType
+          type: organizationType,
+          planCode: selectedPlanCode,
+          redeemCode: redeemCode.trim() || undefined
         })
       });
 
-      const createPayload = (await createRes.json()) as { message?: string; id?: string };
+      const createPayload = (await createRes.json()) as {
+        message?: string;
+        id?: string;
+        redeemCodeApplied?: {
+          code: string;
+          type: 'PERCENT' | 'FREE_PERIOD';
+          percentOff?: number | null;
+          freePeriodDays?: number | null;
+        } | null;
+      };
       if (!createRes.ok) {
         setCreateError(createPayload.message ?? 'Unable to create organization.');
         return;
@@ -243,6 +330,17 @@ export default function DashboardPage(): JSX.Element {
 
       setOrganizationName('');
       setOrganizationType('COMPANY');
+      setSelectedPlanCode('');
+      setRedeemCode('');
+      localStorage.removeItem('quiz_signup_redeem_code');
+      if (createPayload.redeemCodeApplied) {
+        const applied = createPayload.redeemCodeApplied;
+        const summary =
+          applied.type === 'PERCENT'
+            ? `${applied.code} applied: ${applied.percentOff ?? 0}% discount`
+            : `${applied.code} applied: ${applied.freePeriodDays ?? 0} free days`;
+        setRedeemInfo(summary);
+      }
     } catch {
       setCreateError('Unable to create organization. Check API connection.');
     } finally {
@@ -430,6 +528,11 @@ export default function DashboardPage(): JSX.Element {
               <p style={{ margin: 0, color: 'var(--muted)' }}>Signed in as {profile?.email}</p>
             </div>
             <div className="dashboard-actions">
+              {isSuperAdmin ? (
+                <Link href="/dashboard/superadmin" className="btn btn-ghost">
+                  Super Admin
+                </Link>
+              ) : null}
               <Link href="/" className="btn btn-ghost">
                 Landing
               </Link>
@@ -471,7 +574,7 @@ export default function DashboardPage(): JSX.Element {
                 </div>
               </div>
               <p style={{ color: 'var(--muted)', marginTop: 0 }}>
-                Create organizations with dedicated tenant dashboards and isolated scopes.
+                Create organizations with dedicated tenant dashboards, isolated scopes, and select your plan upfront.
               </p>
               <form onSubmit={createOrganization} className="form-surface">
                 <div className="field">
@@ -505,7 +608,80 @@ export default function DashboardPage(): JSX.Element {
                     ))}
                   </select>
                 </div>
+                <div className="field">
+                  <label htmlFor="redeemCode">Redeem code (optional)</label>
+                  <input
+                    id="redeemCode"
+                    value={redeemCode}
+                    onChange={(event) => setRedeemCode(event.target.value.toUpperCase())}
+                    placeholder="WELCOME40"
+                  />
+                  <p style={{ marginTop: '.25rem', color: 'var(--muted)', fontSize: '.82rem' }}>
+                    Use owner-provided code for free period or % discount.
+                  </p>
+                </div>
+                <div className="field">
+                  <label>Choose Plan</label>
+                  <p style={{ marginTop: '.25rem', color: 'var(--muted)', fontSize: '.84rem' }}>
+                    {plans?.trialDays ?? 30}-day free trial. You can change plans later.
+                  </p>
+                  {currentTypePlans.length === 0 ? (
+                    <p style={{ color: 'var(--muted)', margin: 0 }}>Loading plans...</p>
+                  ) : (
+                    <div style={{ display: 'grid', gap: '.5rem' }}>
+                      {currentTypePlans.map((plan) => (
+                        <button
+                          key={plan.code}
+                          type="button"
+                          className="glass-card"
+                          onClick={() => setSelectedPlanCode(plan.code)}
+                          style={{
+                            padding: '.65rem .7rem',
+                            textAlign: 'left',
+                            border: selectedPlanCode === plan.code ? '2px solid #0f766e' : '1px solid var(--line)',
+                            background:
+                              selectedPlanCode === plan.code
+                                ? 'linear-gradient(90deg, rgba(15,118,110,.1), rgba(30,64,175,.08))'
+                                : '#fff'
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '.5rem' }}>
+                            <strong>{plan.name}</strong>
+                            <span className="chip">${plan.priceMonthly}/mo</span>
+                          </div>
+                          <small style={{ color: 'var(--muted)' }}>{plan.description}</small>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {selectedPlan ? (
+                  <div
+                    className="glass-card"
+                    style={{
+                      padding: '.75rem .8rem',
+                      border: '1px solid var(--line)',
+                      background: 'linear-gradient(120deg, rgba(15,118,110,.08), rgba(30,64,175,.06))'
+                    }}
+                  >
+                    <p style={{ margin: 0, color: 'var(--muted)', fontSize: '.78rem', letterSpacing: '.04em', fontWeight: 700 }}>
+                      SELECTED PLAN SUMMARY
+                    </p>
+                    <h4 style={{ margin: '.25rem 0 .35rem' }}>
+                      {selectedPlan.name} (${selectedPlan.priceMonthly}/mo) after trial
+                    </h4>
+                    <div className="chip-row">
+                      <span className="chip">Members: {selectedPlan.limits?.memberLimit ?? '-'}</span>
+                      <span className="chip">Quizzes: {selectedPlan.limits?.quizLimit ?? '-'}</span>
+                      <span className="chip">Monthly Attempts: {selectedPlan.limits?.monthlyAttemptLimit ?? '-'}</span>
+                    </div>
+                    <p style={{ margin: '.55rem 0 0', color: 'var(--muted)', fontSize: '.82rem' }}>
+                      Exceeding plan limits will lock related actions until you upgrade.
+                    </p>
+                  </div>
+                ) : null}
                 {createError ? <p style={{ color: '#b91c1c' }}>{createError}</p> : null}
+                {redeemInfo ? <p style={{ color: '#065f46' }}>{redeemInfo}</p> : null}
                 <button type="submit" className="btn btn-primary" disabled={busy}>
                   {busy ? 'Creating...' : 'Create Organization'}
                 </button>
@@ -792,4 +968,11 @@ export default function DashboardPage(): JSX.Element {
       </section>
     </main>
   );
+}
+
+function thisProductKey(type: OrganizationType): 'SCHOOL' | 'PUBLISHER' {
+  if (type === 'PUBLISHER' || type === 'MEDIA_BRAND') {
+    return 'PUBLISHER';
+  }
+  return 'SCHOOL';
 }

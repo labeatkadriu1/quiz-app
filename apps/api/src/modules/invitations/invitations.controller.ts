@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Headers, Param, Post, UseGuards } from '
 import { IsEmail, IsIn, IsOptional, IsString } from 'class-validator';
 import { CurrentUser, type AuthenticatedUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { BillingGuard } from '../billing/billing.guard';
 import { type InviteScope, InvitationsService } from './invitations.service';
 
 class CreateInvitationDto {
@@ -45,7 +46,7 @@ export class InvitationsController {
   constructor(private readonly invitationsService: InvitationsService) {}
 
   @Post()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, BillingGuard)
   create(
     @Body() body: CreateInvitationDto,
     @Headers('x-organization-id') activeOrganizationId: string | undefined,
@@ -84,7 +85,7 @@ export class InvitationsController {
   }
 
   @Post(':id/resend')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, BillingGuard)
   resend(
     @Param('id') invitationId: string,
     @Headers('x-organization-id') organizationId: string | undefined,
@@ -98,7 +99,7 @@ export class InvitationsController {
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, BillingGuard)
   remove(
     @Param('id') invitationId: string,
     @Headers('x-organization-id') organizationId: string | undefined,

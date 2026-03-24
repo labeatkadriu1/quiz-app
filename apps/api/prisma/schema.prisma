@@ -108,6 +108,8 @@ model Organization {
   classJoinRequests ClassJoinRequest[]
   leadSubmissions   LeadSubmission[]
   assignmentAccessRequests AssignmentAccessRequest[]
+  redeemCodes   RedeemCode[]
+  redeemCodeUsages RedeemCodeUsage[]
 
   @@index([type])
   @@index([status])
@@ -160,8 +162,53 @@ model User {
   leadSubmissions   LeadSubmission[]
   passwordResetTokens PasswordResetToken[]
   reviewedAssignmentAccessRequests AssignmentAccessRequest[]
+  redeemCodesCreated RedeemCode[] @relation("RedeemCodeCreator")
+  redeemCodeUsagesApplied RedeemCodeUsage[] @relation("RedeemCodeUsageActor")
 
   @@index([status])
+}
+
+model RedeemCode {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String?   @db.Uuid
+  code           String    @unique
+  type           String
+  percentOff     Int?
+  freePeriodDays Int?
+  maxRedemptions Int?
+  maxPerClient   Int       @default(1)
+  redemptionCount Int      @default(0)
+  validFrom      DateTime?
+  validUntil     DateTime?
+  active         Boolean   @default(true)
+  newSignupsOnly Boolean   @default(true)
+  createdByUserId String?  @db.Uuid
+  createdByEmail String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy      User?     @relation("RedeemCodeCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  usages         RedeemCodeUsage[]
+
+  @@index([organizationId, active])
+  @@index([validUntil, active])
+}
+
+model RedeemCodeUsage {
+  id              String       @id @default(uuid()) @db.Uuid
+  redeemCodeId    String       @db.Uuid
+  organizationId  String       @db.Uuid
+  appliedByUserId String?      @db.Uuid
+  discountPercentApplied Int?
+  freePeriodDaysApplied Int?
+  metadata        Json?
+  usedAt          DateTime     @default(now())
+  redeemCode      RedeemCode   @relation(fields: [redeemCodeId], references: [id], onDelete: Cascade)
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  appliedBy       User?        @relation("RedeemCodeUsageActor", fields: [appliedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([redeemCodeId, usedAt])
+  @@index([organizationId, usedAt])
 }
 
 model PasswordResetToken {
