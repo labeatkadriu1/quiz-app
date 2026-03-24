@@ -102,6 +102,11 @@ export default function DashboardPage(): JSX.Element {
     () => organizations.filter((item) => item.role?.key?.includes('ADMIN')),
     [organizations]
   );
+  const pendingInvitationsCount = useMemo(
+    () => invitations.filter((item) => item.status === 'PENDING').length,
+    [invitations]
+  );
+  const activeRoleName = activeMembership?.role?.name ?? 'Member';
 
   useEffect(() => {
     async function bootstrap(): Promise<void> {
@@ -413,24 +418,42 @@ export default function DashboardPage(): JSX.Element {
   }
 
   return (
-    <main style={{ padding: '1rem 0 2rem' }}>
+    <main className="dashboard-shell">
       <section className="container">
-        <div className="glass-card" style={{ padding: '1rem', marginBottom: '1rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '.6rem', flexWrap: 'wrap' }}>
+        <div className="glass-card dashboard-hero">
+          <div className="dashboard-hero-top">
             <div>
-              <p style={{ margin: 0, color: 'var(--muted)', fontSize: '.82rem' }}>QuizOS Admin Panel</p>
+              <p className="small-label">QuizOS Admin Panel</p>
               <h1 style={{ margin: '.2rem 0', fontFamily: '"Gill Sans", "Avenir Next Condensed", "Trebuchet MS", sans-serif' }}>
                 Welcome {profile?.firstName ?? 'Admin'}
               </h1>
               <p style={{ margin: 0, color: 'var(--muted)' }}>Signed in as {profile?.email}</p>
             </div>
-            <div style={{ display: 'flex', gap: '.5rem' }}>
+            <div className="dashboard-actions">
               <Link href="/" className="btn btn-ghost">
                 Landing
               </Link>
               <button className="btn btn-primary" onClick={logout} type="button">
                 Logout
               </button>
+            </div>
+          </div>
+          <div className="stats-grid" style={{ marginTop: '.85rem' }}>
+            <div className="dashboard-kpi">
+              <p className="dashboard-kpi-label">Organizations</p>
+              <p className="dashboard-kpi-value">{organizations.length}</p>
+            </div>
+            <div className="dashboard-kpi">
+              <p className="dashboard-kpi-label">Admin Access Orgs</p>
+              <p className="dashboard-kpi-value">{adminOrganizations.length}</p>
+            </div>
+            <div className="dashboard-kpi">
+              <p className="dashboard-kpi-label">Pending Invites</p>
+              <p className="dashboard-kpi-value">{pendingInvitationsCount}</p>
+            </div>
+            <div className="dashboard-kpi">
+              <p className="dashboard-kpi-label">Active Role</p>
+              <p className="dashboard-kpi-value" style={{ fontSize: '1rem' }}>{activeRoleName}</p>
             </div>
           </div>
           {error ? <p style={{ color: '#b91c1c' }}>{error}</p> : null}
@@ -441,11 +464,16 @@ export default function DashboardPage(): JSX.Element {
         <div className="feature-grid">
           {hasAdminAccess || organizations.length === 0 ? (
             <article className="glass-card tint-teal" style={{ padding: '1rem' }}>
-              <h3 style={{ marginTop: 0 }}>Company Setup Wizard</h3>
+              <div className="card-heading">
+                <div>
+                  <p className="small-label">Setup</p>
+                  <h3 style={{ margin: '.1rem 0 0' }}>Company Setup Wizard</h3>
+                </div>
+              </div>
               <p style={{ color: 'var(--muted)', marginTop: 0 }}>
-                Create as many organizations as you need. Each gets a dedicated tenant dashboard and scope.
+                Create organizations with dedicated tenant dashboards and isolated scopes.
               </p>
-              <form onSubmit={createOrganization}>
+              <form onSubmit={createOrganization} className="form-surface">
                 <div className="field">
                   <label htmlFor="organizationName">Organization name</label>
                   <input
@@ -493,7 +521,12 @@ export default function DashboardPage(): JSX.Element {
           )}
 
           <article className="glass-card tint-amber" style={{ padding: '1rem' }}>
-            <h3 style={{ marginTop: 0 }}>Workspace Switcher</h3>
+            <div className="card-heading">
+              <div>
+                <p className="small-label">Workspace</p>
+                <h3 style={{ margin: '.1rem 0 0' }}>Workspace Switcher</h3>
+              </div>
+            </div>
             <p style={{ color: 'var(--muted)' }}>
               Select which organization you are currently managing in this admin panel.
             </p>
@@ -532,7 +565,7 @@ export default function DashboardPage(): JSX.Element {
               </div>
             ) : null}
             {activeOrganization ? (
-              <div style={{ marginTop: '.7rem' }}>
+              <div className="workspace-launch">
                 <Link href={`/dashboard/workspace/${activeOrganization.id}`} className="btn btn-primary">
                   Open Active Dashboard
                 </Link>
@@ -541,11 +574,16 @@ export default function DashboardPage(): JSX.Element {
           </article>
 
           <article className="glass-card tint-blue" style={{ padding: '1rem' }}>
-            <h3 style={{ marginTop: 0 }}>Invite User</h3>
+            <div className="card-heading">
+              <div>
+                <p className="small-label">Access Control</p>
+                <h3 style={{ margin: '.1rem 0 0' }}>Invite User</h3>
+              </div>
+            </div>
             <p style={{ color: 'var(--muted)', marginTop: 0 }}>
               Add admin/teacher/editor users per active org, all your orgs, or all your school organizations.
             </p>
-            <form onSubmit={inviteUser}>
+            <form onSubmit={inviteUser} className="form-surface">
               <div className="field">
                 <label htmlFor="inviteEmail">User email</label>
                 <input
@@ -655,35 +693,32 @@ export default function DashboardPage(): JSX.Element {
 
       <section className="container" style={{ marginTop: '1rem' }}>
         <article className="glass-card" style={{ padding: '1rem' }}>
-          <h3 style={{ marginTop: 0 }}>All Organizations</h3>
+          <div className="card-heading">
+            <div>
+              <p className="small-label">Directory</p>
+              <h3 style={{ margin: '.1rem 0 0' }}>All Organizations</h3>
+            </div>
+          </div>
           <p style={{ color: 'var(--muted)', marginTop: 0 }}>
             Each organization has a dedicated dashboard. Enter directly based on company type.
           </p>
           {organizations.length === 0 ? (
             <p style={{ color: 'var(--muted)' }}>No organization yet.</p>
           ) : (
-            <div style={{ display: 'grid', gap: '.7rem' }}>
+            <div className="list-stack">
               {organizations.map((item) => (
                 <div
                   key={item.id}
-                  className="glass-card"
-                  style={{
-                    padding: '.8rem',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: '.8rem',
-                    flexWrap: 'wrap'
-                  }}
+                  className="list-row"
                 >
                   <div>
                     <strong>{item.organization.name}</strong>
-                    <div style={{ color: 'var(--muted)', fontSize: '.9rem' }}>
+                    <div className="list-meta">
                       {item.organization.type} · {item.organization.status}
                       {item.role?.name ? ` · ${item.role.name}` : ''}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '.5rem', flexWrap: 'wrap' }}>
+                  <div className="stacked-actions">
                     <button
                       type="button"
                       className="btn btn-ghost"
@@ -704,26 +739,31 @@ export default function DashboardPage(): JSX.Element {
 
       <section className="container" style={{ marginTop: '1rem' }}>
         <article className="glass-card" style={{ padding: '1rem' }}>
-          <h3 style={{ marginTop: 0 }}>Recent Invitations (Active Organization)</h3>
+          <div className="card-heading">
+            <div>
+              <p className="small-label">Invitations</p>
+              <h3 style={{ margin: '.1rem 0 0' }}>Recent Invitations (Active Organization)</h3>
+            </div>
+          </div>
           {!activeOrganizationId ? (
             <p style={{ color: 'var(--muted)' }}>Select an active organization to see invitations.</p>
           ) : invitations.length === 0 ? (
             <p style={{ color: 'var(--muted)' }}>No invitations yet.</p>
           ) : (
-            <div style={{ display: 'grid', gap: '.55rem' }}>
+            <div className="list-stack">
               {invitations.map((invite) => (
                 <div
                   key={invite.id}
-                  className="glass-card"
-                  style={{ padding: '.7rem', display: 'flex', justifyContent: 'space-between', gap: '.7rem', flexWrap: 'wrap' }}
+                  className="list-row"
                 >
                   <div>
                     <strong>{invite.email}</strong>
-                    <div style={{ color: 'var(--muted)', fontSize: '.86rem' }}>
+                    <div className="list-meta">
                       {invite.role?.name ?? invite.role?.key ?? 'Role not set'} · {invite.status}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '.45rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div className="stacked-actions">
+                    <span className={`status-pill ${invite.status.toLowerCase()}`}>{invite.status}</span>
                     <div style={{ color: 'var(--muted)', fontSize: '.82rem' }}>
                       Expires {new Date(invite.expiresAt).toLocaleDateString()}
                     </div>

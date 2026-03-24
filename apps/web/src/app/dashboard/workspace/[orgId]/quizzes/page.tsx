@@ -5,13 +5,22 @@ import { useParams, useRouter } from 'next/navigation';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3000/api/v1';
+type QuizContentType = 'QUIZ' | 'FORM' | 'POLL_SURVEY' | 'MINIGAME' | 'PERSONALITY_QUIZ' | 'PREDICTOR' | 'LEADERBOARD' | 'STORY';
 
 interface QuizItem {
   id: string;
   title: string;
   status: string;
+  contentType?: QuizContentType;
   visibility: string;
   createdAt: string;
+}
+
+interface OrganizationMembership {
+  organization: {
+    id: string;
+    name: string;
+  };
 }
 
 export default function WorkspaceQuizzesPage(): JSX.Element {
@@ -25,6 +34,10 @@ export default function WorkspaceQuizzesPage(): JSX.Element {
   const [quizzes, setQuizzes] = useState<QuizItem[]>([]);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [contentType, setContentType] = useState<QuizContentType>('QUIZ');
+  const [deleteTarget, setDeleteTarget] = useState<QuizItem | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [organizationName, setOrganizationName] = useState<string>(orgId);
 
   const publishedCount = useMemo(() => quizzes.filter((quiz) => quiz.status === 'PUBLISHED').length, [quizzes]);
 
@@ -52,6 +65,19 @@ export default function WorkspaceQuizzesPage(): JSX.Element {
         return;
       }
       setQuizzes(payload);
+
+      const orgResponse = await fetch(`${API_BASE}/organizations`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const orgPayload = (await orgResponse.json()) as OrganizationMembership[] | { message?: string };
+      if (orgResponse.ok && Array.isArray(orgPayload)) {
+        const activeOrg = orgPayload.find((item) => item.organization.id === orgId);
+        if (activeOrg?.organization?.name) {
+          setOrganizationName(activeOrg.organization.name);
+        } else {
+          setOrganizationName(orgId);
+        }
+      }
     } catch {
       setError('Unable to load quizzes');
     } finally {
@@ -84,7 +110,8 @@ export default function WorkspaceQuizzesPage(): JSX.Element {
         },
         body: JSON.stringify({
           title: title.trim(),
-          description: description.trim() || undefined
+          description: description.trim() || undefined,
+          contentType
         })
       });
 
@@ -96,6 +123,7 @@ export default function WorkspaceQuizzesPage(): JSX.Element {
 
       setTitle('');
       setDescription('');
+      setContentType('QUIZ');
       await loadQuizzes();
     } catch {
       setError('Unable to create quiz');
@@ -132,6 +160,36 @@ export default function WorkspaceQuizzesPage(): JSX.Element {
     }
   }
 
+  async function deleteQuiz(quiz: QuizItem): Promise<void> {
+    const token = localStorage.getItem('quiz_access_token');
+    if (!token) {
+      router.replace('/login');
+      return;
+    }
+    setDeleteBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(`${API_BASE}/quizzes/${quiz.id}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'x-organization-id': orgId
+        }
+      });
+      const payload = (await response.json()) as { message?: string };
+      if (!response.ok) {
+        setError(payload.message ?? 'Unable to delete quiz');
+        return;
+      }
+      setDeleteTarget(null);
+      await loadQuizzes();
+    } catch {
+      setError('Unable to delete quiz');
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
   if (loading) {
     return (
       <main className="auth-shell">
@@ -150,7 +208,7 @@ export default function WorkspaceQuizzesPage(): JSX.Element {
             Quiz Studio
           </h1>
           <p style={{ color: 'var(--muted)' }}>
-            Organization: <strong>{orgId}</strong>
+            Organization: <strong>{organizationName}</strong>
           </p>
           <div className="chip-row">
             <span className="chip">Total: {quizzes.length}</span>
@@ -178,6 +236,52 @@ export default function WorkspaceQuizzesPage(): JSX.Element {
                 <label htmlFor="description">Description</label>
                 <input id="description" value={description} onChange={(event) => setDescription(event.target.value)} />
               </div>
+              <div className="field">
+                <label>Content Type</label>
+                <div style={{ display: 'grid', gap: '.45rem' }}>
+                  {([
+                    { key: 'QUIZ', label: 'Quiz', desc: 'Scored Q&A format', enabled: true },
+                    { key: 'FORM', label: 'Form', desc: 'Lead/data capture flow', enabled: true },
+                    { key: 'POLL_SURVEY', label: 'Poll / Survey', desc: 'Coming soon', enabled: false },
+                    { key: 'MINIGAME', label: 'Minigame', desc: 'Coming soon', enabled: false },
+                    { key: 'PERSONALITY_QUIZ', label: 'Personality Quiz', desc: 'Coming soon', enabled: false },
+                    { key: 'PREDICTOR', label: 'Predictor', desc: 'Score prediction card experience', enabled: true },
+                    { key: 'LEADERBOARD', label: 'Leaderboard', desc: 'Coming soon', enabled: false },
+                    { key: 'STORY', label: 'Story', desc: 'Coming soon', enabled: false }
+                  ] as Array<{ key: QuizContentType; label: string; desc: string; enabled: boolean }>).map((item) => {
+                    const selected = contentType === item.key;
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        className="glass-card"
+                        disabled={!item.enabled}
+                        onClick={() => {
+                          if (!item.enabled) {
+                            return;
+                          }
+                          setContentType(item.key);
+                        }}
+                        style={{
+                          padding: '.55rem .65rem',
+                          textAlign: 'left',
+                          border: selected ? '2px solid #334155' : '1px solid var(--line)',
+                          opacity: item.enabled ? 1 : .64,
+                          background: selected ? 'linear-gradient(90deg, rgba(30,64,175,.12), rgba(16,185,129,.10))' : undefined
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '.5rem', alignItems: 'center' }}>
+                          <strong>{item.label}</strong>
+                          <span className="chip" style={{ fontSize: '.74rem' }}>
+                            {selected ? 'Selected' : item.enabled ? 'Available' : 'Soon'}
+                          </span>
+                        </div>
+                        <small style={{ color: 'var(--muted)' }}>{item.desc}</small>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
               {error ? <p style={{ color: '#b91c1c' }}>{error}</p> : null}
               <button className="btn btn-primary" type="submit" disabled={busy}>
                 {busy ? 'Saving...' : 'Create Quiz'}
@@ -200,7 +304,7 @@ export default function WorkspaceQuizzesPage(): JSX.Element {
                     <div>
                       <strong>{quiz.title}</strong>
                       <div style={{ color: 'var(--muted)', fontSize: '.86rem' }}>
-                        {quiz.status} · {quiz.visibility}
+                        {quiz.status} · {(quiz.contentType ?? 'QUIZ').replace(/_/g, ' ')} · {quiz.visibility}
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '.45rem' }}>
@@ -216,6 +320,14 @@ export default function WorkspaceQuizzesPage(): JSX.Element {
                       >
                         Add Questions
                       </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => setDeleteTarget(quiz)}
+                        style={{ borderColor: '#fecaca', color: '#b91c1c', background: '#fff5f5' }}
+                      >
+                        Delete
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -224,6 +336,70 @@ export default function WorkspaceQuizzesPage(): JSX.Element {
           </article>
         </div>
       </section>
+
+      {deleteTarget ? (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, .58)',
+            display: 'grid',
+            placeItems: 'center',
+            zIndex: 60,
+            padding: '1rem'
+          }}
+          onClick={() => {
+            if (!deleteBusy) {
+              setDeleteTarget(null);
+            }
+          }}
+        >
+          <div
+            className="glass-card"
+            style={{
+              width: 'min(560px, 100%)',
+              padding: '1rem',
+              borderRadius: 18,
+              border: '1px solid #fecaca',
+              background: 'linear-gradient(180deg, rgba(255,255,255,.98), rgba(255,247,247,.96))'
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <p style={{ margin: 0, color: '#991b1b', fontSize: '.8rem', letterSpacing: '.04em', fontWeight: 800 }}>DELETE QUIZ</p>
+            <h3 style={{ margin: '.35rem 0 .45rem' }}>{deleteTarget.title}</h3>
+            <p style={{ marginTop: 0, color: '#334155' }}>
+              This action permanently deletes the quiz and all related content:
+              questions, assignments, attempts, submissions, results, and analytics snapshots.
+            </p>
+            <div
+              style={{
+                border: '1px dashed #fca5a5',
+                borderRadius: 12,
+                padding: '.7rem',
+                background: '#fff1f2',
+                color: '#7f1d1d',
+                fontSize: '.88rem'
+              }}
+            >
+              Users and organizations are not deleted. Only this quiz and its data are removed.
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '.55rem', marginTop: '.9rem', flexWrap: 'wrap' }}>
+              <button type="button" className="btn btn-ghost" onClick={() => setDeleteTarget(null)} disabled={deleteBusy}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => void deleteQuiz(deleteTarget)}
+                disabled={deleteBusy}
+                style={{ background: '#b91c1c', borderColor: '#b91c1c' }}
+              >
+                {deleteBusy ? 'Deleting...' : 'Delete Permanently'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

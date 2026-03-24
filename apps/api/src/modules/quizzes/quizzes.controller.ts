@@ -57,6 +57,10 @@ class CreateQuizDto {
   @IsOptional()
   @IsBoolean()
   shuffleAnswers?: boolean;
+
+  @IsOptional()
+  @IsString()
+  contentType?: string;
 }
 
 class AnswerOptionDto {
@@ -215,6 +219,11 @@ class EndFormFieldDto {
   @IsOptional()
   @IsBoolean()
   required?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  options?: string[];
 }
 
 class EndFormDto {
@@ -254,6 +263,141 @@ class QuizSettingsDto {
   showAnswerFeedback?: boolean;
 }
 
+class QuizThemeDto {
+  @IsOptional()
+  @IsString()
+  backgroundColor?: string;
+
+  @IsOptional()
+  @IsString()
+  backgroundGradient?: string;
+
+  @IsOptional()
+  @IsString()
+  cardColor?: string;
+
+  @IsOptional()
+  @IsString()
+  textColor?: string;
+
+  @IsOptional()
+  @IsString()
+  mutedTextColor?: string;
+
+  @IsOptional()
+  @IsString()
+  primaryColor?: string;
+
+  @IsOptional()
+  @IsString()
+  primaryTextColor?: string;
+
+  @IsOptional()
+  @IsString()
+  correctColor?: string;
+
+  @IsOptional()
+  @IsString()
+  wrongColor?: string;
+
+  @IsOptional()
+  @IsString()
+  fontFamily?: string;
+}
+
+class StartScreenDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @IsIn(['DEFAULT', 'CUSTOM'])
+  mode?: 'DEFAULT' | 'CUSTOM';
+
+  @IsOptional()
+  @IsBoolean()
+  showGlassCard?: boolean;
+
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  buttonLabel?: string;
+
+  @IsOptional()
+  @IsString()
+  introHtml?: string;
+
+  @IsOptional()
+  @IsString()
+  coverImageUrl?: string;
+}
+
+class PredictorConfigDto {
+  @IsOptional()
+  @IsString()
+  badgeText?: string;
+
+  @IsOptional()
+  @IsString()
+  titleText?: string;
+
+  @IsOptional()
+  @IsString()
+  leftTeamName?: string;
+
+  @IsOptional()
+  @IsString()
+  rightTeamName?: string;
+
+  @IsOptional()
+  @IsString()
+  leftTeamLogoUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  rightTeamLogoUrl?: string;
+
+  @IsOptional()
+  @IsInt()
+  leftScore?: number;
+
+  @IsOptional()
+  @IsInt()
+  rightScore?: number;
+
+  @IsOptional()
+  @IsInt()
+  minScore?: number;
+
+  @IsOptional()
+  @IsInt()
+  maxScore?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  step?: number;
+}
+
+class QuizContentTypeDto {
+  @IsString()
+  @IsIn(['QUIZ', 'FORM', 'POLL_SURVEY', 'MINIGAME', 'PERSONALITY_QUIZ', 'PREDICTOR', 'LEADERBOARD', 'STORY'])
+  contentType!: string;
+}
+
+class ReviewAssignmentRequestDto {
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
 @Controller('quizzes')
 @UseGuards(JwtAuthGuard)
 export class QuizzesController {
@@ -275,7 +419,8 @@ export class QuizzesController {
       timeLimitSeconds: body.timeLimitSeconds,
       attemptLimitDefault: body.attemptLimitDefault,
       shuffleQuestions: body.shuffleQuestions,
-      shuffleAnswers: body.shuffleAnswers
+      shuffleAnswers: body.shuffleAnswers,
+      contentType: body.contentType
     });
   }
 
@@ -332,6 +477,105 @@ export class QuizzesController {
     });
   }
 
+  @Patch(':id/theme')
+  configureTheme(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @Param('id') quizId: string,
+    @Body() body: QuizThemeDto,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.quizzesService.configureQuizTheme({
+      organizationId: organizationId ?? '',
+      actorUserId: user.id,
+      quizId,
+      theme: body
+    });
+  }
+
+  @Patch(':id/content-type')
+  configureContentType(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @Param('id') quizId: string,
+    @Body() body: QuizContentTypeDto,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.quizzesService.configureContentType({
+      organizationId: organizationId ?? '',
+      actorUserId: user.id,
+      quizId,
+      contentType: body.contentType
+    });
+  }
+
+  @Patch(':id/predictor-config')
+  configurePredictorConfig(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @Param('id') quizId: string,
+    @Body() body: PredictorConfigDto,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.quizzesService.configurePredictorConfig({
+      organizationId: organizationId ?? '',
+      actorUserId: user.id,
+      quizId,
+      config: body
+    });
+  }
+
+  @Get(':id/predictor-config')
+  getPredictorConfig(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @Param('id') quizId: string,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.quizzesService.getPredictorConfig({
+      organizationId: organizationId ?? '',
+      actorUserId: user.id,
+      quizId
+    });
+  }
+
+  @Get(':id/theme')
+  getTheme(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @Param('id') quizId: string,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.quizzesService.getQuizTheme({
+      organizationId: organizationId ?? '',
+      actorUserId: user.id,
+      quizId
+    });
+  }
+
+  @Patch(':id/start-screen')
+  configureStartScreen(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @Param('id') quizId: string,
+    @Body() body: StartScreenDto,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.quizzesService.configureStartScreen({
+      organizationId: organizationId ?? '',
+      actorUserId: user.id,
+      quizId,
+      config: body
+    });
+  }
+
+  @Get(':id/start-screen')
+  getStartScreen(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @Param('id') quizId: string,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.quizzesService.getStartScreen({
+      organizationId: organizationId ?? '',
+      actorUserId: user.id,
+      quizId
+    });
+  }
+
   @Post(':id/questions')
   addQuestion(
     @Headers('x-organization-id') organizationId: string | undefined,
@@ -369,6 +613,19 @@ export class QuizzesController {
       imageUrl: body.imageUrl,
       points: body.points,
       options: body.options
+    });
+  }
+
+  @Delete(':id')
+  deleteQuiz(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @Param('id') quizId: string,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.quizzesService.deleteQuiz({
+      organizationId: organizationId ?? '',
+      actorUserId: user.id,
+      quizId
     });
   }
 
@@ -443,6 +700,61 @@ export class QuizzesController {
       organizationId: organizationId ?? '',
       quizId,
       actorUserId: user.id
+    });
+  }
+
+  @Get(':id/assignments/:assignmentId/requests')
+  listAssignmentRequests(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @Param('id') quizId: string,
+    @Param('assignmentId') assignmentId: string,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.quizzesService.listAssignmentRequests({
+      organizationId: organizationId ?? '',
+      quizId,
+      assignmentId,
+      actorUserId: user.id
+    });
+  }
+
+  @Post(':id/assignments/:assignmentId/requests/:requestId/approve')
+  approveAssignmentRequest(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @Param('id') quizId: string,
+    @Param('assignmentId') assignmentId: string,
+    @Param('requestId') requestId: string,
+    @Body() body: ReviewAssignmentRequestDto,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.quizzesService.reviewAssignmentRequest({
+      organizationId: organizationId ?? '',
+      quizId,
+      assignmentId,
+      requestId,
+      actorUserId: user.id,
+      action: 'APPROVE',
+      note: body.note
+    });
+  }
+
+  @Post(':id/assignments/:assignmentId/requests/:requestId/reject')
+  rejectAssignmentRequest(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @Param('id') quizId: string,
+    @Param('assignmentId') assignmentId: string,
+    @Param('requestId') requestId: string,
+    @Body() body: ReviewAssignmentRequestDto,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.quizzesService.reviewAssignmentRequest({
+      organizationId: organizationId ?? '',
+      quizId,
+      assignmentId,
+      requestId,
+      actorUserId: user.id,
+      action: 'REJECT',
+      note: body.note
     });
   }
 

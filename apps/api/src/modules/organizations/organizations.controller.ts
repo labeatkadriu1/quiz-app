@@ -51,4 +51,31 @@ export class OrganizationsController {
       userId: user.id
     });
   }
+
+  @Get('plans')
+  plans() {
+    return this.organizationsService.getPlans();
+  }
+
+  @Get('current/billing')
+  getCurrentBilling(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.organizationsService.getCurrentBilling({
+      organizationId,
+      userId: user.id
+    });
+  }
+
+  @Post('current/billing/activate')
+  activateCurrentBilling(
+    @Headers('x-organization-id') organizationId: string | undefined,
+    @CurrentUser() user: AuthenticatedUser
+  ) {
+    return this.organizationsService.activateCurrentBilling({
+      organizationId,
+      userId: user.id
+    });
+  }
 }

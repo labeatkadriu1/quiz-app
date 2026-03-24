@@ -1,0 +1,2 @@
+ALTER TABLE "Quiz"
+  ADD COLUMN "contentType" TEXT NOT NULL DEFAULT 'QUIZ';

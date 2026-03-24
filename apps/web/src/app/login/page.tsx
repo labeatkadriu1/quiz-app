@@ -86,6 +86,11 @@ export default function LoginPage(): JSX.Element {
               minLength={8}
               autoComplete="current-password"
             />
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <Link href="/forgot-password" style={{ color: 'var(--brand-strong)', fontWeight: 700, fontSize: '.84rem' }}>
+                Forgot password?
+              </Link>
+            </div>
           </div>
           <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={loading}>
             {loading ? 'Signing in...' : 'Sign In'}

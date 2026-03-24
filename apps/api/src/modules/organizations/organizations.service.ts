@@ -12,6 +12,8 @@ export class OrganizationsService {
     creatorUserId: string;
   }) {
     return this.prisma.$transaction(async (tx) => {
+      const trialStartedAt = new Date();
+      const trialEndsAt = new Date(trialStartedAt.getTime() + 30 * 24 * 60 * 60 * 1000);
       const organization = await tx.organization.create({
         data: {
           name: input.name,
@@ -19,6 +21,14 @@ export class OrganizationsService {
           settings: {
             create: {
               settings: this.defaultSettingsForType(input.type) as Prisma.JsonObject
+            }
+          },
+          subscription: {
+            create: {
+              planCode: this.defaultPlanCodeForType(input.type),
+              billingStatus: 'TRIALING',
+              trialStartedAt,
+              trialEndsAt
             }
           }
         }
@@ -88,7 +98,10 @@ export class OrganizationsService {
       throw new ForbiddenException('Membership is not active');
     }
 
-    return membership;
+    return {
+      ...membership,
+      billing: this.toBillingState(membership.organization.subscription)
+    };
   }
 
   async listCurrentOrganizationMembers(input: { organizationId?: string; userId: string }) {
@@ -123,6 +136,87 @@ export class OrganizationsService {
     });
   }
 
+  async getPlans() {
+    return {
+      trialDays: 30,
+      products: [
+        {
+          productKey: 'SCHOOL',
+          title: 'School Quiz Platform',
+          plans: [
+            { code: 'SCHOOL_STARTER', name: 'Starter', priceMonthly: 19, description: 'Small schools and pilot classrooms' },
+            { code: 'SCHOOL_GROWTH', name: 'Growth', priceMonthly: 59, description: 'Growing schools with multiple classes' },
+            { code: 'SCHOOL_PRO', name: 'Pro', priceMonthly: 129, description: 'Full school operations and analytics' }
+          ]
+        },
+        {
+          productKey: 'PUBLISHER',
+          title: 'Publisher Engagement Platform',
+          plans: [
+            { code: 'PUBLISHER_STARTER', name: 'Starter', priceMonthly: 29, description: 'Low-volume engagement quizzes' },
+            { code: 'PUBLISHER_GROWTH', name: 'Growth', priceMonthly: 99, description: 'Regular campaigns with lead forms' },
+            { code: 'PUBLISHER_PRO', name: 'Pro', priceMonthly: 199, description: 'High-volume media and conversion analytics' }
+          ]
+        }
+      ]
+    };
+  }
+
+  async getCurrentBilling(input: { organizationId?: string; userId: string }) {
+    const membership = await this.getCurrentOrganization(input);
+    return {
+      organizationId: membership.organization.id,
+      organizationName: membership.organization.name,
+      planCode: membership.organization.subscription?.planCode ?? null,
+      ...this.toBillingState(membership.organization.subscription)
+    };
+  }
+
+  async activateCurrentBilling(input: { organizationId?: string; userId: string }) {
+    if (!input.organizationId) {
+      throw new BadRequestException('x-organization-id header is required');
+    }
+
+    const membership = await this.prisma.organizationMember.findUnique({
+      where: {
+        organizationId_userId: {
+          organizationId: input.organizationId,
+          userId: input.userId
+        }
+      },
+      include: {
+        role: true
+      }
+    });
+    if (!membership || membership.status !== MemberStatus.ACTIVE) {
+      throw new ForbiddenException('Active organization membership required');
+    }
+    if (!membership.role?.key?.includes('ADMIN')) {
+      throw new ForbiddenException('Admin role required');
+    }
+
+    const existing = await this.prisma.subscription.findUnique({
+      where: { organizationId: input.organizationId }
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Subscription not found');
+    }
+
+    const updated = await this.prisma.subscription.update({
+      where: { organizationId: input.organizationId },
+      data: {
+        billingStatus: 'ACTIVE'
+      }
+    });
+
+    return {
+      organizationId: input.organizationId,
+      planCode: updated.planCode,
+      ...this.toBillingState(updated)
+    };
+  }
+
   private defaultSettingsForType(type: OrganizationType): Record<string, unknown> {
     const base = {
       leaderboardEnabled: true,
@@ -143,6 +237,35 @@ export class OrganizationsService {
       embedEnabled: false,
       leadFormsEnabled: false,
       schoolModeEnabled: true
+    };
+  }
+
+  private defaultPlanCodeForType(type: OrganizationType): string {
+    if (type === OrganizationType.PUBLISHER || type === OrganizationType.MEDIA_BRAND) {
+      return 'PUBLISHER_GROWTH';
+    }
+    return 'SCHOOL_GROWTH';
+  }
+
+  private toBillingState(subscription: { billingStatus: string; trialEndsAt: Date | null } | null) {
+    if (!subscription) {
+      return {
+        billingStatus: 'UNCONFIGURED',
+        trialEndsAt: null,
+        trialDaysLeft: 0,
+        paymentRequired: true
+      };
+    }
+    const trialEndsAt = subscription.trialEndsAt;
+    const now = new Date();
+    const diffMs = trialEndsAt ? trialEndsAt.getTime() - now.getTime() : 0;
+    const trialDaysLeft = trialEndsAt ? Math.max(0, Math.ceil(diffMs / (24 * 60 * 60 * 1000))) : 0;
+    const isTrialExpired = subscription.billingStatus === 'TRIALING' && trialEndsAt ? diffMs < 0 : false;
+    return {
+      billingStatus: isTrialExpired ? 'TRIAL_EXPIRED' : subscription.billingStatus,
+      trialEndsAt,
+      trialDaysLeft,
+      paymentRequired: subscription.billingStatus !== 'ACTIVE' && (subscription.billingStatus !== 'TRIALING' || isTrialExpired)
     };
   }
 }

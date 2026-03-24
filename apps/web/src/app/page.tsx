@@ -1,304 +1,406 @@
 import Link from 'next/link';
 
+const VALUE_POINTS = [
+  {
+    title: 'Why teams switch to QuizOS',
+    items: [
+      'Replace disconnected tools with one platform for school and publisher workflows',
+      'Launch quizzes faster with reusable templates and role-based approval flow',
+      'Distribute instantly via class assignment, secure links, or embedded experiences',
+      'Measure what matters: starts, completions, pass rate, CTA clicks, and conversions'
+    ]
+  },
+  {
+    title: 'What you unlock',
+    items: [
+      'Professional quiz builder with branding, media, and dynamic start/end blocks',
+      'School mode with classes, teacher controls, assignments, and leaderboard insights',
+      'Publisher mode with embeds, lead capture, CTA blocks, and conversion tracking',
+      'Multi-tenant admin with organization-level visibility, invitations, and access control'
+    ]
+  }
+];
+
+const MODULES = [
+  {
+    title: 'School Performance Suite',
+    description: 'Organize classes, assign assessments, monitor student progress, and benchmark outcomes across schools.'
+  },
+  {
+    title: 'Publisher Engagement Engine',
+    description: 'Ship interactive quizzes, embed across websites, and turn audience engagement into qualified leads.'
+  },
+  {
+    title: 'Tenant Admin Control Center',
+    description: 'Run multiple organizations with secure isolation, governance controls, invitation workflows, and visibility.'
+  }
+];
+
+const WORKFLOW = [
+  {
+    step: '01',
+    title: 'Design',
+    text: 'Build conversion-ready quizzes with themes, media, and custom intro/outro experiences.'
+  },
+  {
+    step: '02',
+    title: 'Distribute',
+    text: 'Assign to classes, publish via secure links, or embed across your external websites.'
+  },
+  {
+    step: '03',
+    title: 'Optimize',
+    text: 'Use analytics and conversion signals to improve outcomes and grow engagement.'
+  }
+];
+
+const AUDIENCE = [
+  {
+    title: 'For Schools',
+    points: ['Teacher assignments by class/student', 'Student dashboards and attempts', 'Performance and leaderboard visibility']
+  },
+  {
+    title: 'For Publishers',
+    points: ['Embed quizzes on websites', 'Capture leads with end-form blocks', 'Track conversions and drop-off']
+  },
+  {
+    title: 'For Multi-Org Teams',
+    points: ['Manage multiple tenants in one account', 'Invite by role and organization scope', 'Centralized admin and governance']
+  }
+];
+
+const FEATURE_ROWS = [
+  {
+    feature: 'Quiz Builder',
+    school: 'Draft, publish, assign by class',
+    publisher: 'Create campaigns and brand flows'
+  },
+  {
+    feature: 'Distribution',
+    school: 'Student/class/school scope',
+    publisher: 'Public link + iframe embed'
+  },
+  {
+    feature: 'End Screens',
+    school: 'Score and learning follow-up',
+    publisher: 'CTA, form, redirect, article blocks'
+  },
+  {
+    feature: 'Analytics',
+    school: 'Scores, completion, performance',
+    publisher: 'Views, starts, conversion funnel'
+  },
+  {
+    feature: 'Access & Security',
+    school: 'Role-based admin controls',
+    publisher: 'Domain + access restrictions'
+  }
+];
+
+const FAQ = [
+  {
+    q: 'Is this two separate products?',
+    a: 'No. It is one shared core platform with different operational modes for schools and publishers.'
+  },
+  {
+    q: 'Can I create multiple organizations?',
+    a: 'Yes. You can create and manage multiple organizations and switch workspaces from one account.'
+  },
+  {
+    q: 'Can quizzes be private and public?',
+    a: 'Yes. You can run private class assignments, secure public links, and embedded public experiences.'
+  },
+  {
+    q: 'Do you support lead capture?',
+    a: 'Yes. End-of-quiz forms capture name/email/phone and custom fields for campaign conversion.'
+  }
+];
+
+const PRICING = [
+  {
+    product: 'School Quiz Platform',
+    plans: [
+      { name: 'Starter', price: '$19/mo', desc: 'Small schools and pilot classes' },
+      { name: 'Growth', price: '$59/mo', desc: 'Multiple classes and teacher workflows' },
+      { name: 'Pro', price: '$129/mo', desc: 'Full operations and advanced analytics' }
+    ]
+  },
+  {
+    product: 'Publisher Engagement Platform',
+    plans: [
+      { name: 'Starter', price: '$29/mo', desc: 'Low-volume quiz campaigns' },
+      { name: 'Growth', price: '$99/mo', desc: 'Embeds, lead capture, conversion tracking' },
+      { name: 'Pro', price: '$199/mo', desc: 'High-volume media and enterprise scale' }
+    ]
+  }
+];
+
+const PRODUCT_SCREENS = [
+  {
+    title: 'Admin Dashboard',
+    subtitle: 'Organization switcher, invites, and tenant controls',
+    src: '/screens/admin-dashboard.svg'
+  },
+  {
+    title: 'Quiz Builder',
+    subtitle: 'Question flow, design settings, and start/end experiences',
+    src: '/screens/quiz-builder.svg'
+  },
+  {
+    title: 'Public Quiz Player',
+    subtitle: 'Branded play view with conversion-ready end forms',
+    src: '/screens/public-player.svg'
+  }
+];
+
 export default function HomePage(): JSX.Element {
   return (
-    <main>
-      <header className="container" style={{ padding: '1rem 0' }}>
-        <div
-          className="glass-card"
-          style={{
-            padding: '0.85rem 1rem',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center'
-          }}
-        >
-          <div style={{ fontWeight: 800, fontFamily: '"Gill Sans", "Avenir Next Condensed", "Trebuchet MS", sans-serif' }}>
-            QuizOS
-          </div>
-          <div style={{ display: 'flex', gap: '.6rem' }}>
-            <Link href="/login" className="btn btn-ghost">
-              Login
-            </Link>
-            <Link href="/register" className="btn btn-primary">
-              Start Free
-            </Link>
+    <main className="landing-shell">
+      <header className="container" style={{ padding: '1rem 0 .4rem' }}>
+        <div className="landing-nav">
+          <div className="landing-brand">QuizOS</div>
+          <nav className="landing-nav-links">
+            <a href="#why">Why QuizOS</a>
+            <a href="#audience">Who It&apos;s For</a>
+            <a href="#offers">What We Offer</a>
+            <a href="#pricing">Pricing</a>
+            <a href="#features">Features</a>
+            <a href="#faq">FAQ</a>
+          </nav>
+          <div className="landing-actions">
+            <Link href="/login" className="btn btn-ghost">Login</Link>
+            <Link href="/register" className="btn btn-primary">Start Free</Link>
           </div>
         </div>
       </header>
 
-      <section className="container" style={{ padding: '1rem 0 1.2rem' }}>
-        <div className="hero-grid">
+      <section className="container landing-hero">
+        <div className="landing-hero-grid">
           <div>
-            <p
-              style={{
-                display: 'inline-block',
-                padding: '.3rem .6rem',
-                borderRadius: 999,
-                border: '1px solid var(--line)',
-                background: 'rgba(255,255,255,.75)',
-                fontSize: '.82rem',
-                marginBottom: '.7rem'
-              }}
-            >
-              Multi-tenant quiz SaaS for schools and publishers
-            </p>
-            <h1
-              style={{
-                fontFamily: '"Gill Sans", "Avenir Next Condensed", "Trebuchet MS", sans-serif',
-                fontSize: 'clamp(2rem,5vw,3.6rem)',
-                lineHeight: 1.04,
-                margin: 0
-              }}
-            >
-              Launch quizzes that teach, rank, convert and scale.
+            <span className="landing-pill">Built for schools, publishers, and multi-org teams</span>
+            <h1 className="landing-title">
+              Create high-performing quizzes that educate, engage, and convert.
             </h1>
-            <p style={{ color: 'var(--muted)', fontSize: '1.07rem', maxWidth: 650 }}>
-              One platform for classrooms and content teams. Build quizzes, assign by class, embed on any
-              site, track performance, capture leads, and manage every organization from one secure SaaS core.
+            <p className="landing-subtitle">
+              QuizOS combines classroom assessment, public quiz campaigns, and lead generation in one secure multi-tenant platform.
+              Launch faster, track deeper, and scale without product fragmentation.
             </p>
-            <div style={{ display: 'flex', gap: '.65rem', flexWrap: 'wrap', marginTop: '.8rem' }}>
-              <Link href="/register" className="btn btn-primary">
-                Create Workspace
-              </Link>
-              <Link href="/login" className="btn btn-ghost">
-                Sign In
-              </Link>
+            <div className="landing-actions-row">
+              <Link href="/register" className="btn btn-primary">Start Free Workspace</Link>
+              <Link href="/login" className="btn btn-ghost">Sign In</Link>
+            </div>
+            <div className="landing-proof">
+              <span>No-code Quiz Builder</span>
+              <span>Class + Public Distribution</span>
+              <span>Lead & CTA Capture</span>
+              <span>Secure Tenant Isolation</span>
             </div>
           </div>
+          <aside className="landing-showcase">
+            <div className="landing-showcase-head">
+              <strong>Business Impact Snapshot</strong>
+              <span>Representative platform metrics</span>
+            </div>
+            <div className="landing-metrics">
+              <div><p>Active Organizations</p><strong>118</strong></div>
+              <div><p>Monthly Quiz Attempts</p><strong>103k</strong></div>
+              <div><p>Average Completion Rate</p><strong>68%</strong></div>
+              <div><p>Lead Conversion Rate</p><strong>14.2%</strong></div>
+            </div>
+            <div className="landing-chart">
+              <div className="landing-bar b1" />
+              <div className="landing-bar b2" />
+              <div className="landing-bar b3" />
+              <div className="landing-bar b4" />
+              <div className="landing-bar b5" />
+            </div>
+            <div className="landing-showcase-foot">
+              <div>
+                <p>Data Window</p>
+                <strong>Last 30 Days</strong>
+              </div>
+              <div>
+                <p>Best Performing Segment</p>
+                <strong>Class Assignments</strong>
+              </div>
+              <div>
+                <p>Tracking Coverage</p>
+                <strong>Start → Completion → CTA</strong>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
 
-          <div className="glass-card" style={{ padding: '1rem' }}>
-            <div
-              style={{
-                borderRadius: 16,
-                padding: '1rem',
-                background:
-                  'linear-gradient(135deg, rgba(15,118,110,.12), rgba(245,158,11,.14)), rgba(255,255,255,.8)',
-                border: '1px solid var(--line)'
-              }}
+      <section id="why" className="container section-band">
+        <div className="landing-split">
+          {VALUE_POINTS.map((group) => (
+            <article key={group.title} className="glass-card landing-panel">
+              <h3>{group.title}</h3>
+              <ul>
+                {group.items.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section id="offers" className="container section-band">
+        <h2 className="section-title">What We Offer</h2>
+        <p className="section-lead">A complete product stack for assessment, engagement, and conversion.</p>
+        <div className="feature-grid">
+          {MODULES.map((module, idx) => (
+            <article
+              key={module.title}
+              className={`glass-card ${idx === 0 ? 'tint-teal' : idx === 1 ? 'tint-amber' : 'tint-blue'}`}
+              style={{ padding: '1rem' }}
             >
-              <h3 style={{ marginTop: 0 }}>Live Product Snapshot</h3>
-              <div className="stats-grid">
-                <div className="glass-card" style={{ padding: '.7rem' }}>
-                  <div style={{ fontSize: '.8rem', color: 'var(--muted)' }}>Organizations</div>
-                  <strong>1,240</strong>
-                </div>
-                <div className="glass-card" style={{ padding: '.7rem' }}>
-                  <div style={{ fontSize: '.8rem', color: 'var(--muted)' }}>Monthly Attempts</div>
-                  <strong>2.9M</strong>
-                </div>
-                <div className="glass-card" style={{ padding: '.7rem' }}>
-                  <div style={{ fontSize: '.8rem', color: 'var(--muted)' }}>Completion Rate</div>
-                  <strong>71%</strong>
-                </div>
-                <div className="glass-card" style={{ padding: '.7rem' }}>
-                  <div style={{ fontSize: '.8rem', color: 'var(--muted)' }}>Lead Conversion</div>
-                  <strong>18.4%</strong>
-                </div>
-              </div>
-              <div style={{ marginTop: '.8rem', color: 'var(--muted)', fontSize: '.9rem' }}>
-                Includes assignment engine, school leaderboard, publisher embeds, CTA forms, and event analytics.
-              </div>
-              <svg
-                viewBox="0 0 640 220"
-                style={{
-                  width: '100%',
-                  marginTop: '.9rem',
-                  borderRadius: 14,
-                  border: '1px solid var(--line)',
-                  background: 'rgba(255,255,255,.88)'
-                }}
-                role="img"
-                aria-label="Quiz analytics preview"
-              >
-                <rect x="0" y="0" width="640" height="220" fill="url(#bg)" />
-                <defs>
-                  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-                    <stop offset="0%" stopColor="#ecfeff" />
-                    <stop offset="100%" stopColor="#fef3c7" />
-                  </linearGradient>
-                </defs>
-                <rect x="20" y="20" width="250" height="180" rx="12" fill="#ffffff" stroke="#d1d5db" />
-                <rect x="290" y="20" width="330" height="82" rx="12" fill="#ffffff" stroke="#d1d5db" />
-                <rect x="290" y="118" width="155" height="82" rx="12" fill="#ffffff" stroke="#d1d5db" />
-                <rect x="465" y="118" width="155" height="82" rx="12" fill="#ffffff" stroke="#d1d5db" />
-                <rect x="38" y="45" width="54" height="8" rx="4" fill="#0f766e" />
-                <rect x="38" y="63" width="145" height="8" rx="4" fill="#e5e7eb" />
-                <rect x="38" y="84" width="210" height="8" rx="4" fill="#e5e7eb" />
-                <rect x="38" y="105" width="175" height="8" rx="4" fill="#e5e7eb" />
-                <rect x="38" y="129" width="190" height="8" rx="4" fill="#e5e7eb" />
-                <rect x="38" y="150" width="90" height="28" rx="8" fill="#115e59" />
-                <circle cx="315" cy="62" r="16" fill="#f59e0b" />
-                <rect x="340" y="45" width="160" height="8" rx="4" fill="#e5e7eb" />
-                <rect x="340" y="62" width="220" height="8" rx="4" fill="#e5e7eb" />
-                <rect x="340" y="79" width="135" height="8" rx="4" fill="#e5e7eb" />
-                <rect x="309" y="142" width="116" height="9" rx="4.5" fill="#0f766e" />
-                <rect x="309" y="159" width="82" height="9" rx="4.5" fill="#e5e7eb" />
-                <rect x="484" y="142" width="116" height="9" rx="4.5" fill="#0f766e" />
-                <rect x="484" y="159" width="82" height="9" rx="4.5" fill="#e5e7eb" />
-              </svg>
-            </div>
-          </div>
+              <h3 style={{ marginTop: 0 }}>{module.title}</h3>
+              <p style={{ color: 'var(--muted)', marginBottom: 0 }}>{module.description}</p>
+            </article>
+          ))}
         </div>
       </section>
 
-      <section className="container" style={{ padding: '.7rem 0 1.5rem' }}>
-        <h2 className="section-title">Built For Two Powerful Modes</h2>
+      <section className="container section-band">
+        <h2 className="section-title">Real Product Screens</h2>
         <p className="section-lead">
-          Run classroom assessments and media engagement campaigns from one shared SaaS core.
+          These blocks are ready for your actual screenshots from your live admin and quiz pages.
         </p>
-        <div className="feature-grid">
-          <article className="glass-card tint-teal" style={{ padding: '1rem' }}>
-            <h3>School Mode</h3>
-            <p style={{ color: 'var(--muted)' }}>
-              Teacher assignments, class groups, student attempts, score tracking, pass thresholds, and school-level
-              ranking.
-            </p>
-            <div className="chip-row">
-              <span className="chip">Class Management</span>
-              <span className="chip">Teacher Workflows</span>
-              <span className="chip">Student Portals</span>
-            </div>
-          </article>
-          <article className="glass-card tint-amber" style={{ padding: '1rem' }}>
-            <h3>Publisher Mode</h3>
-            <p style={{ color: 'var(--muted)' }}>
-              Publish and embed quizzes, set end-screen CTA/forms, collect leads, and optimize funnels with drop-off
-              analytics.
-            </p>
-            <div className="chip-row">
-              <span className="chip">Iframe Embed</span>
-              <span className="chip">Lead Forms</span>
-              <span className="chip">Conversion Events</span>
-            </div>
-          </article>
-          <article className="glass-card tint-blue" style={{ padding: '1rem' }}>
-            <h3>Shared Core SaaS</h3>
-            <p style={{ color: 'var(--muted)' }}>
-              Multi-tenant architecture, RBAC, subscriptions, audit logs, and a unified admin layer for scale.
-            </p>
-            <div className="chip-row">
-              <span className="chip">Tenant Isolation</span>
-              <span className="chip">Role Permissions</span>
-              <span className="chip">Audit Trails</span>
-            </div>
-          </article>
+        <div className="landing-screen-grid">
+          {PRODUCT_SCREENS.map((screen) => (
+            <article key={screen.title} className="glass-card landing-screen-card">
+              <img src={screen.src} alt={screen.title} />
+              <div className="landing-screen-meta">
+                <strong>{screen.title}</strong>
+                <p>{screen.subtitle}</p>
+              </div>
+            </article>
+          ))}
         </div>
       </section>
 
-      <section className="container section-band">
-        <div className="feature-grid">
-          <article className="glass-card" style={{ padding: '1rem' }}>
-            <h3 style={{ marginTop: 0 }}>What your team can do</h3>
-            <ul style={{ margin: 0, color: 'var(--muted)', paddingLeft: '1rem' }}>
-              <li>Create and publish quizzes with draft workflows</li>
-              <li>Assign quizzes by student, class, school or public link</li>
-              <li>Track attempts, scores, pass rates and leaderboard ranking</li>
-              <li>Customize end screens with CTA, forms and redirects</li>
-            </ul>
-          </article>
-          <article className="glass-card" style={{ padding: '1rem' }}>
-            <h3 style={{ marginTop: 0 }}>Platform architecture</h3>
-            <ul style={{ margin: 0, color: 'var(--muted)', paddingLeft: '1rem' }}>
-              <li>Next.js frontend, NestJS API, PostgreSQL transactional core</li>
-              <li>Redis cache + queue for workers and fast leaderboard reads</li>
-              <li>Event-based analytics with expansion path to ClickHouse</li>
-              <li>Built for Heroku-first deployment and future cloud migration</li>
-            </ul>
-          </article>
-          <article className="glass-card" style={{ padding: '1rem' }}>
-            <h3 style={{ marginTop: 0 }}>Security and compliance</h3>
-            <ul style={{ margin: 0, color: 'var(--muted)', paddingLeft: '1rem' }}>
-              <li>Per-organization data boundaries and strict membership checks</li>
-              <li>JWT auth, server-side validation, and rate limiting controls</li>
-              <li>Audit log strategy for admin and content actions</li>
-              <li>Design ready for GDPR/COPPA controls and PII governance</li>
-            </ul>
-          </article>
+      <section id="audience" className="container section-band">
+        <h2 className="section-title">Who It&apos;s For</h2>
+        <p className="section-lead">Clear fit by use case, from classrooms to media campaigns.</p>
+        <div className="landing-audience-grid">
+          {AUDIENCE.map((group, idx) => (
+            <article
+              key={group.title}
+              className={`glass-card ${idx === 0 ? 'tint-teal' : idx === 1 ? 'tint-amber' : 'tint-blue'}`}
+              style={{ padding: '1rem' }}
+            >
+              <h3 style={{ marginTop: 0 }}>{group.title}</h3>
+              <ul className="landing-mini-list">
+                {group.points.map((point) => (
+                  <li key={point}>{point}</li>
+                ))}
+              </ul>
+            </article>
+          ))}
         </div>
       </section>
 
-      <section className="container section-band">
-        <h2 className="section-title">Product Visual Showcase</h2>
-        <p className="section-lead">More than text: this is how your SaaS experience can look inside the platform.</p>
-        <div className="showcase-grid">
-          <article className="glass-card tint-blue" style={{ padding: '1rem' }}>
-            <svg viewBox="0 0 760 320" style={{ width: '100%', borderRadius: 12, border: '1px solid var(--line)' }}>
-              <rect x="0" y="0" width="760" height="320" fill="#f8fafc" />
-              <rect x="16" y="16" width="170" height="288" rx="12" fill="#ffffff" stroke="#d1d5db" />
-              <rect x="202" y="16" width="542" height="70" rx="12" fill="#ffffff" stroke="#d1d5db" />
-              <rect x="202" y="98" width="260" height="206" rx="12" fill="#ffffff" stroke="#d1d5db" />
-              <rect x="478" y="98" width="266" height="98" rx="12" fill="#ffffff" stroke="#d1d5db" />
-              <rect x="478" y="206" width="266" height="98" rx="12" fill="#ffffff" stroke="#d1d5db" />
-              <rect x="34" y="38" width="130" height="10" rx="5" fill="#0f766e" />
-              <rect x="34" y="60" width="108" height="8" rx="4" fill="#e5e7eb" />
-              <rect x="34" y="79" width="118" height="8" rx="4" fill="#e5e7eb" />
-              <rect x="34" y="98" width="90" height="8" rx="4" fill="#e5e7eb" />
-              <rect x="225" y="36" width="130" height="10" rx="5" fill="#f59e0b" />
-              <rect x="225" y="56" width="240" height="8" rx="4" fill="#e5e7eb" />
-              <rect x="225" y="116" width="220" height="10" rx="5" fill="#0f766e" />
-              <rect x="225" y="134" width="180" height="8" rx="4" fill="#e5e7eb" />
-              <rect x="225" y="150" width="210" height="8" rx="4" fill="#e5e7eb" />
-              <rect x="500" y="120" width="220" height="8" rx="4" fill="#e5e7eb" />
-              <rect x="500" y="137" width="180" height="8" rx="4" fill="#e5e7eb" />
-              <rect x="500" y="230" width="220" height="8" rx="4" fill="#e5e7eb" />
-              <rect x="500" y="247" width="170" height="8" rx="4" fill="#e5e7eb" />
-            </svg>
-            <div className="visual-label">School dashboard: classes, assignments, and performance cards.</div>
-          </article>
-
-          <div className="mini-grid">
-            <article className="glass-card tint-amber" style={{ padding: '1rem' }}>
-              <svg viewBox="0 0 440 150" style={{ width: '100%', borderRadius: 12, border: '1px solid var(--line)' }}>
-                <rect width="440" height="150" fill="#fff7ed" />
-                <rect x="14" y="14" width="265" height="122" rx="10" fill="#ffffff" stroke="#d1d5db" />
-                <rect x="292" y="14" width="134" height="57" rx="10" fill="#ffffff" stroke="#d1d5db" />
-                <rect x="292" y="79" width="134" height="57" rx="10" fill="#ffffff" stroke="#d1d5db" />
-                <rect x="28" y="34" width="98" height="8" rx="4" fill="#f59e0b" />
-                <rect x="28" y="50" width="225" height="8" rx="4" fill="#e5e7eb" />
-                <rect x="28" y="66" width="195" height="8" rx="4" fill="#e5e7eb" />
-                <rect x="28" y="90" width="72" height="24" rx="7" fill="#115e59" />
-              </svg>
-              <div className="visual-label">Publisher embed panel with CTA configuration.</div>
+      <section id="workflow" className="container section-band">
+        <h2 className="section-title">How It Works</h2>
+        <p className="section-lead">From creation to impact in three clear stages.</p>
+        <div className="landing-workflow">
+          {WORKFLOW.map((item) => (
+            <article key={item.step} className="landing-work-item">
+              <span className="landing-step">{item.step}</span>
+              <h4>{item.title}</h4>
+              <p>{item.text}</p>
             </article>
+          ))}
+        </div>
+      </section>
 
-            <article className="glass-card tint-teal" style={{ padding: '1rem' }}>
-              <svg viewBox="0 0 440 150" style={{ width: '100%', borderRadius: 12, border: '1px solid var(--line)' }}>
-                <rect width="440" height="150" fill="#ecfeff" />
-                <polyline
-                  points="24,120 80,92 130,105 190,70 250,80 310,54 360,63 416,34"
-                  fill="none"
-                  stroke="#0f766e"
-                  strokeWidth="5"
-                  strokeLinecap="round"
-                />
-                <circle cx="80" cy="92" r="5" fill="#0f766e" />
-                <circle cx="190" cy="70" r="5" fill="#0f766e" />
-                <circle cx="310" cy="54" r="5" fill="#0f766e" />
-                <rect x="20" y="16" width="120" height="10" rx="5" fill="#0f766e" />
-                <rect x="20" y="32" width="180" height="8" rx="4" fill="#cbd5e1" />
-              </svg>
-              <div className="visual-label">Analytics funnel: starts, completion, drop-off, conversion.</div>
-            </article>
+      <section id="features" className="container section-band">
+        <h2 className="section-title">Feature Breakdown</h2>
+        <p className="section-lead">See exactly how each mode works before you start.</p>
+        <div className="glass-card" style={{ padding: '1rem' }}>
+          <div className="landing-feature-header">
+            <strong>Capability</strong>
+            <strong>School Mode</strong>
+            <strong>Publisher Mode</strong>
+          </div>
+          <div className="landing-feature-table">
+            {FEATURE_ROWS.map((row) => (
+              <div key={row.feature} className="landing-feature-row">
+                <span>{row.feature}</span>
+                <span>{row.school}</span>
+                <span>{row.publisher}</span>
+              </div>
+            ))}
           </div>
         </div>
       </section>
 
-      <section className="container" style={{ padding: '.6rem 0 2.3rem' }}>
-        <div className="glass-card" style={{ padding: '1rem', textAlign: 'center' }}>
-          <h2 style={{ fontFamily: '"Gill Sans", "Avenir Next Condensed", "Trebuchet MS", sans-serif', marginBottom: '.4rem' }}>
-            Ready to launch your quiz SaaS?
-          </h2>
-          <p style={{ color: 'var(--muted)', marginTop: 0 }}>
-            Start with one organization and scale to schools, media brands, and enterprise clients.
-          </p>
-          <div style={{ display: 'flex', gap: '.65rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-            <Link href="/register" className="btn btn-primary">
-              Create Account
-            </Link>
-            <Link href="/login" className="btn btn-ghost">
-              Login
-            </Link>
+      <section id="pricing" className="container section-band">
+        <h2 className="section-title">Pricing</h2>
+        <p className="section-lead">
+          Start with a full-feature 30-day free trial. After trial, activate payment to continue.
+        </p>
+        <div className="landing-pricing-grid">
+          {PRICING.map((block) => (
+            <article key={block.product} className="glass-card" style={{ padding: '1rem' }}>
+              <h3 style={{ marginTop: 0 }}>{block.product}</h3>
+              <div className="landing-pricing-plans">
+                {block.plans.map((plan) => (
+                  <div key={`${block.product}-${plan.name}`} className="landing-price-card">
+                    <p className="landing-price-name">{plan.name}</p>
+                    <strong className="landing-price-value">{plan.price}</strong>
+                    <p className="landing-price-desc">{plan.desc}</p>
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="container section-band">
+        <div className="landing-security">
+          <article className="glass-card" style={{ padding: '1rem' }}>
+            <h3 style={{ marginTop: 0 }}>Security and Compliance Ready</h3>
+            <ul className="landing-mini-list">
+              <li>Organization-level tenant isolation and membership checks</li>
+              <li>Role-based access control for admins, teachers, editors, and students</li>
+              <li>Audit-friendly operational model for critical content actions</li>
+            </ul>
+          </article>
+          <article className="glass-card" style={{ padding: '1rem' }}>
+            <h3 style={{ marginTop: 0 }}>What Happens After Signup</h3>
+            <ul className="landing-mini-list">
+              <li>Create organization and choose type (school/publisher/company)</li>
+              <li>Invite users and assign role permissions</li>
+              <li>Create first quiz and publish with assignment or public access</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="faq" className="container section-band">
+        <h2 className="section-title">Frequently Asked Questions</h2>
+        <div className="landing-faq-grid">
+          {FAQ.map((item) => (
+            <article key={item.q} className="glass-card" style={{ padding: '1rem' }}>
+              <h4 style={{ marginTop: 0, marginBottom: '.35rem' }}>{item.q}</h4>
+              <p style={{ margin: 0, color: 'var(--muted)' }}>{item.a}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="container" style={{ padding: '.8rem 0 2.2rem' }}>
+        <div className="glass-card landing-cta">
+          <h2>Ready to launch and scale your quiz business?</h2>
+          <p>Start free now, onboard your first organization, and grow into a multi-tenant quiz SaaS with confidence.</p>
+          <div className="landing-actions-row" style={{ justifyContent: 'center' }}>
+            <Link href="/register" className="btn btn-primary">Create Free Account</Link>
+            <Link href="/login" className="btn btn-ghost">Go to Login</Link>
           </div>
         </div>
       </section>

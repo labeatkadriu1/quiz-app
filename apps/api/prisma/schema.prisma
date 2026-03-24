@@ -69,6 +69,7 @@ enum AssignmentScopeType {
   SCHOOL_WIDE
   PUBLIC_LINK
   EMBED_PUBLIC
+  REQUEST_LINK
 }
 
 enum AttemptStatus {
@@ -106,6 +107,7 @@ model Organization {
   classJoinLinks    ClassJoinLink[]
   classJoinRequests ClassJoinRequest[]
   leadSubmissions   LeadSubmission[]
+  assignmentAccessRequests AssignmentAccessRequest[]
 
   @@index([type])
   @@index([status])
@@ -122,12 +124,15 @@ model Subscription {
   organizationId String       @unique @db.Uuid
   planCode       String
   billingStatus  String
+  trialStartedAt DateTime?
+  trialEndsAt    DateTime?
   seatLimit      Int?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([billingStatus])
+  @@index([trialEndsAt])
 }
 
 model User {
@@ -153,8 +158,22 @@ model User {
   classJoinRequests ClassJoinRequest[]
   reviewedClassJoinRequests ClassJoinRequest[] @relation("ClassJoinRequestReviewer")
   leadSubmissions   LeadSubmission[]
+  passwordResetTokens PasswordResetToken[]
+  reviewedAssignmentAccessRequests AssignmentAccessRequest[]
 
   @@index([status])
+}
+
+model PasswordResetToken {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
 }
 
 model OrganizationMember {
@@ -256,6 +275,7 @@ model Quiz {
   title               String
   description         String?
   status              QuizStatus        @default(DRAFT)
+  contentType         String            @default("QUIZ")
   visibility          QuizVisibility    @default(PRIVATE)
   publicAccessEnabled Boolean           @default(false)
   publicAccessMode    String?
@@ -268,6 +288,7 @@ model Quiz {
   endFormDescription  String?
   endFormSubmitLabel  String?
   endFormFields       Json?
+  themeConfig         Json?
   passScore           Int               @default(0)
   attemptLimitDefault Int?
   timeLimitSeconds    Int?
@@ -285,6 +306,7 @@ model Quiz {
   attempts            QuizAttempt[]
   results             Result[]
   leadSubmissions     LeadSubmission[]
+  assignmentAccessRequests AssignmentAccessRequest[]
 
   @@index([organizationId, status])
   @@index([organizationId, publishedAt])
@@ -333,6 +355,7 @@ model QuizAssignment {
   endAt          DateTime?
   attemptLimit   Int?
   passScoreOverride Int?
+  requestAccessToken String?           @unique
   createdAt      DateTime             @default(now())
   updatedAt      DateTime             @updatedAt
   organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -340,9 +363,31 @@ model QuizAssignment {
   assignedBy     User                 @relation(fields: [assignedById], references: [id], onDelete: Restrict)
   targets        QuizAssignmentTarget[]
   attempts       QuizAttempt[]
+  accessRequests AssignmentAccessRequest[]
 
   @@index([organizationId, quizId])
   @@index([startAt, endAt])
+}
+
+model AssignmentAccessRequest {
+  id             String          @id @default(uuid()) @db.Uuid
+  organizationId String          @db.Uuid
+  quizId         String          @db.Uuid
+  assignmentId   String          @db.Uuid
+  name           String
+  email          String
+  status         JoinRequestStatus @default(PENDING)
+  requestedAt    DateTime        @default(now())
+  reviewedAt     DateTime?
+  reviewedById   String?         @db.Uuid
+  reviewedNote   String?
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  quiz           Quiz            @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  assignment     QuizAssignment  @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  reviewedBy     User?           @relation(fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, assignmentId, status])
+  @@index([email, status])
 }
 
 model QuizAssignmentTarget {

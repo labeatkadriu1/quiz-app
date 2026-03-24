@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Headers, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
-import { IsEmail, IsObject, IsOptional, IsString, IsUUID, ValidateNested } from 'class-validator';
+import { IsEmail, IsInt, IsObject, IsOptional, IsString, IsUUID, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { CurrentUser, type AuthenticatedUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -35,6 +35,37 @@ class PublicStartDto {
 class PublicEndFormDto {
   @IsObject()
   values!: Record<string, unknown>;
+}
+
+class PublicPredictorDto {
+  @IsInt()
+  leftScore!: number;
+
+  @IsInt()
+  rightScore!: number;
+
+  @IsOptional()
+  @IsString()
+  leftTeamName?: string;
+
+  @IsOptional()
+  @IsString()
+  rightTeamName?: string;
+}
+
+class PublicSubmitDto {
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PublicPredictorDto)
+  predictor?: PublicPredictorDto;
+}
+
+class PublicAssignmentRequestDto {
+  @IsString()
+  name!: string;
+
+  @IsEmail()
+  email!: string;
 }
 
 @Controller()
@@ -118,9 +149,10 @@ export class AttemptsController {
   }
 
   @Post('public/attempts/:id/submit')
-  submitPublic(@Param('id') attemptId: string) {
+  submitPublic(@Param('id') attemptId: string, @Body() body: PublicSubmitDto) {
     return this.attemptsService.submitPublicAttempt({
-      attemptId
+      attemptId,
+      predictor: body.predictor
     });
   }
 
@@ -144,6 +176,23 @@ export class AttemptsController {
     return this.attemptsService.getPublicQuiz({
       quizId,
       token: token ?? ''
+    });
+  }
+
+  @Get('public/assignments/request-link/:token')
+  getPublicAssignmentRequestContext(@Param('token') token: string) {
+    return this.attemptsService.getPublicAssignmentRequestContext({ token });
+  }
+
+  @Post('public/assignments/request-link/:token/request')
+  submitPublicAssignmentRequest(
+    @Param('token') token: string,
+    @Body() body: PublicAssignmentRequestDto
+  ) {
+    return this.attemptsService.submitPublicAssignmentRequest({
+      token,
+      name: body.name,
+      email: body.email
     });
   }
 }

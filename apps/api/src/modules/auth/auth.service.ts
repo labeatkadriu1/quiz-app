@@ -2,7 +2,9 @@ import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/
 import { JwtService } from '@nestjs/jwt';
 import { User } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import { createHash, randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { EmailService } from '../email/email.service';
 
 interface TokenPayload {
   sub: string;
@@ -18,7 +20,8 @@ interface AuthTokens {
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly jwtService: JwtService
+    private readonly jwtService: JwtService,
+    private readonly emailService: EmailService
   ) {}
 
   async register(input: {
@@ -92,6 +95,97 @@ export class AuthService {
     return this.signTokens({ sub: input.id, email: input.email });
   }
 
+  async requestPasswordReset(input: { email: string }) {
+    const normalizedEmail = input.email.trim().toLowerCase();
+    const user = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail }
+    });
+
+    if (!user) {
+      return { ok: true, delivered: false };
+    }
+
+    const rawToken = randomBytes(32).toString('hex');
+    const tokenHash = this.hashResetToken(rawToken);
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 30);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.passwordResetToken.updateMany({
+        where: {
+          userId: user.id,
+          usedAt: null
+        },
+        data: {
+          usedAt: new Date()
+        }
+      });
+
+      await tx.passwordResetToken.create({
+        data: {
+          userId: user.id,
+          tokenHash,
+          expiresAt
+        }
+      });
+    });
+
+    const webUrl = process.env.WEB_URL?.replace(/\/$/, '') ?? 'http://localhost:3001';
+    const resetUrl = `${webUrl}/reset-password?token=${encodeURIComponent(rawToken)}`;
+    const mail = await this.emailService.sendPasswordResetEmail({
+      toEmail: user.email,
+      resetUrl,
+      expiresAt
+    });
+
+    const includeDebugLink = process.env.NODE_ENV !== 'production';
+    return {
+      ok: true,
+      delivered: mail.delivered,
+      ...(includeDebugLink ? { resetUrl } : {})
+    };
+  }
+
+  async resetPassword(input: { token: string; password: string }) {
+    const tokenHash = this.hashResetToken(input.token.trim());
+    const now = new Date();
+
+    const resetToken = await this.prisma.passwordResetToken.findUnique({
+      where: { tokenHash },
+      include: { user: true }
+    });
+
+    if (!resetToken || resetToken.usedAt || resetToken.expiresAt <= now) {
+      throw new BadRequestException('Reset link is invalid or expired');
+    }
+
+    const passwordHash = await bcrypt.hash(input.password, 12);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: resetToken.userId },
+        data: {
+          passwordHash
+        }
+      });
+
+      await tx.passwordResetToken.update({
+        where: { id: resetToken.id },
+        data: { usedAt: new Date() }
+      });
+
+      await tx.passwordResetToken.updateMany({
+        where: {
+          userId: resetToken.userId,
+          usedAt: null,
+          id: { not: resetToken.id }
+        },
+        data: { usedAt: new Date() }
+      });
+    });
+
+    return { ok: true };
+  }
+
   private async signTokens(payload: TokenPayload): Promise<AuthTokens> {
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
@@ -105,5 +199,9 @@ export class AuthService {
     ]);
 
     return { accessToken, refreshToken };
+  }
+
+  private hashResetToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
   }
 }

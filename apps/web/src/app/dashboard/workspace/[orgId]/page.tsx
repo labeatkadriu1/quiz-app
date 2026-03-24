@@ -22,6 +22,16 @@ interface OrganizationMembership {
   } | null;
 }
 
+interface BillingStatus {
+  organizationId: string;
+  organizationName: string;
+  planCode: string | null;
+  billingStatus: string;
+  trialEndsAt: string | null;
+  trialDaysLeft: number;
+  paymentRequired: boolean;
+}
+
 interface QuizItem {
   id: string;
   title: string;
@@ -40,6 +50,8 @@ interface InvitationItem {
   status: string;
   createdAt: string;
 }
+
+type WorkspaceTab = 'OVERVIEW' | 'OPERATIONS' | 'ACTIVITY';
 
 function sectionsForType(type: OrganizationType): Array<{ title: string; desc: string; actionLabel: string; route: 'quizzes' | 'classes' | 'analytics' }> {
   if (type === 'SCHOOL') {
@@ -140,6 +152,9 @@ export default function WorkspaceDashboardPage(): JSX.Element {
   const [quizzes, setQuizzes] = useState<QuizItem[]>([]);
   const [classes, setClasses] = useState<ClassItem[]>([]);
   const [invitations, setInvitations] = useState<InvitationItem[]>([]);
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('OVERVIEW');
+  const [billing, setBilling] = useState<BillingStatus | null>(null);
+  const [activatingBilling, setActivatingBilling] = useState(false);
 
   useEffect(() => {
     async function loadWorkspace(): Promise<void> {
@@ -191,6 +206,17 @@ export default function WorkspaceDashboardPage(): JSX.Element {
     () => invitations.filter((invite) => invite.status === 'PENDING').length,
     [invitations]
   );
+  const latestQuizzes = useMemo(() => quizzes.slice(0, 6), [quizzes]);
+  const latestClasses = useMemo(() => classes.slice(0, 6), [classes]);
+  const latestInvitations = useMemo(() => invitations.slice(0, 6), [invitations]);
+
+  function formatOrgType(type: OrganizationType): string {
+    return type
+      .toLowerCase()
+      .split('_')
+      .map((chunk) => chunk.charAt(0).toUpperCase() + chunk.slice(1))
+      .join(' ');
+  }
 
   useEffect(() => {
     if (!loading && organizations.length > 0 && !membership) {
@@ -207,19 +233,48 @@ export default function WorkspaceDashboardPage(): JSX.Element {
       'x-organization-id': activeOrgId
     };
 
-    const [quizzesRes, classesRes, invitesRes] = await Promise.all([
+    const [quizzesRes, classesRes, invitesRes, billingRes] = await Promise.all([
       fetch(`${API_BASE}/quizzes`, { headers }),
       fetch(`${API_BASE}/classes`, { headers }),
-      fetch(`${API_BASE}/invitations`, { headers })
+      fetch(`${API_BASE}/invitations`, { headers }),
+      fetch(`${API_BASE}/organizations/current/billing`, { headers })
     ]);
 
     const quizzesPayload = (await quizzesRes.json()) as QuizItem[] | { message?: string };
     const classesPayload = (await classesRes.json()) as ClassItem[] | { message?: string };
     const invitesPayload = (await invitesRes.json()) as InvitationItem[] | { message?: string };
+    const billingPayload = (await billingRes.json()) as BillingStatus | { message?: string };
 
     setQuizzes(Array.isArray(quizzesPayload) ? quizzesPayload : []);
     setClasses(Array.isArray(classesPayload) ? classesPayload : []);
     setInvitations(Array.isArray(invitesPayload) ? invitesPayload : []);
+    setBilling(billingRes.ok && 'billingStatus' in billingPayload ? billingPayload as BillingStatus : null);
+  }
+
+  async function activateBilling(): Promise<void> {
+    if (!membership) {
+      return;
+    }
+    const token = localStorage.getItem('quiz_access_token');
+    if (!token) {
+      router.replace('/login');
+      return;
+    }
+    setActivatingBilling(true);
+    try {
+      const response = await fetch(`${API_BASE}/organizations/current/billing/activate`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'x-organization-id': membership.organization.id
+        }
+      });
+      if (response.ok) {
+        await refreshData();
+      }
+    } finally {
+      setActivatingBilling(false);
+    }
   }
 
   async function refreshData(): Promise<void> {
@@ -266,15 +321,42 @@ export default function WorkspaceDashboardPage(): JSX.Element {
     <main style={{ padding: '1rem 0 2rem' }}>
       <section className="container">
         <div className="glass-card" style={{ padding: '1rem', marginBottom: '1rem' }}>
-          <p style={{ margin: 0, color: 'var(--muted)', fontSize: '.82rem' }}>Dedicated Tenant Dashboard</p>
+          <p style={{ margin: 0, color: 'var(--muted)', fontSize: '.82rem' }}>Workspace Dashboard</p>
           <h1 style={{ margin: '.2rem 0', fontFamily: '"Gill Sans", "Avenir Next Condensed", "Trebuchet MS", sans-serif' }}>
             {membership.organization.name}
           </h1>
+          <p style={{ marginTop: 0, color: 'var(--muted)' }}>
+            Manage this tenant with a clear flow: review summary, run operations, then monitor activity.
+          </p>
           <div className="chip-row">
-            <span className="chip">Type: {membership.organization.type}</span>
+            <span className="chip">Type: {formatOrgType(membership.organization.type)}</span>
             <span className="chip">Status: {membership.organization.status}</span>
+            {billing?.planCode ? <span className="chip">Plan: {billing.planCode}</span> : null}
+            {billing?.billingStatus ? <span className="chip">Billing: {billing.billingStatus}</span> : null}
+            {billing?.billingStatus === 'TRIALING' ? <span className="chip">Trial left: {billing.trialDaysLeft} days</span> : null}
             {membership.role?.name ? <span className="chip">Role: {membership.role.name}</span> : null}
           </div>
+          {billing?.paymentRequired ? (
+            <div
+              style={{
+                marginTop: '.75rem',
+                border: '1px solid rgba(153, 27, 27, 0.25)',
+                background: 'rgba(254, 242, 242, 0.9)',
+                borderRadius: 12,
+                padding: '.72rem .8rem'
+              }}
+            >
+              <strong style={{ display: 'block', marginBottom: '.2rem' }}>Trial ended. Payment required.</strong>
+              <p style={{ margin: 0, color: 'var(--muted)', fontSize: '.9rem' }}>
+                Your 30-day trial has ended. Activate payment to continue full workspace access.
+              </p>
+              <div style={{ marginTop: '.55rem' }}>
+                <button className="btn btn-primary" type="button" onClick={() => void activateBilling()} disabled={activatingBilling}>
+                  {activatingBilling ? 'Activating...' : 'Activate Payment'}
+                </button>
+              </div>
+            </div>
+          ) : null}
           <div style={{ display: 'flex', gap: '.5rem', marginTop: '.75rem', flexWrap: 'wrap' }}>
             <Link href="/dashboard" className="btn btn-ghost">
               Back to Admin Center
@@ -285,101 +367,160 @@ export default function WorkspaceDashboardPage(): JSX.Element {
             <button
               className="btn btn-primary"
               type="button"
-              onClick={() => alert('Quiz module route is next step. Use Admin Center invite/create flow for now.')}
+              onClick={() => router.push(`/dashboard/workspace/${membership.organization.id}/quizzes`)}
             >
-              Create Quiz
+              Open Quiz Studio
             </button>
           </div>
         </div>
       </section>
 
       <section className="container" style={{ marginBottom: '1rem' }}>
-        <div className="stats-grid">
-          <article className="glass-card" style={{ padding: '.8rem' }}>
-            <div style={{ color: 'var(--muted)', fontSize: '.82rem' }}>Total Quizzes</div>
-            <strong style={{ fontSize: '1.2rem' }}>{quizzes.length}</strong>
-          </article>
-          <article className="glass-card" style={{ padding: '.8rem' }}>
-            <div style={{ color: 'var(--muted)', fontSize: '.82rem' }}>Published Quizzes</div>
-            <strong style={{ fontSize: '1.2rem' }}>{publishedQuizCount}</strong>
-          </article>
-          <article className="glass-card" style={{ padding: '.8rem' }}>
-            <div style={{ color: 'var(--muted)', fontSize: '.82rem' }}>Classes</div>
-            <strong style={{ fontSize: '1.2rem' }}>{classes.length}</strong>
-          </article>
-          <article className="glass-card" style={{ padding: '.8rem' }}>
-            <div style={{ color: 'var(--muted)', fontSize: '.82rem' }}>Pending Invites</div>
-            <strong style={{ fontSize: '1.2rem' }}>{pendingInviteCount}</strong>
-          </article>
-        </div>
-      </section>
-
-      <section className="container">
-        <div className="feature-grid">
-          {sections.map((section) => (
-            <article key={section.title} className="glass-card" style={{ padding: '1rem' }}>
-              <h3 style={{ marginTop: 0 }}>{section.title}</h3>
-              <p style={{ color: 'var(--muted)', marginBottom: '.8rem' }}>{section.desc}</p>
+        <div className="glass-card" style={{ padding: '.65rem' }}>
+          <div style={{ display: 'flex', gap: '.45rem', flexWrap: 'wrap' }}>
+            {(['OVERVIEW', 'OPERATIONS', 'ACTIVITY'] as WorkspaceTab[]).map((tab) => (
               <button
-                className="btn btn-ghost"
+                key={tab}
                 type="button"
-                onClick={() => router.push(`/dashboard/workspace/${membership.organization.id}/${section.route}`)}
+                className={activeTab === tab ? 'btn btn-primary' : 'btn btn-ghost'}
+                onClick={() => setActiveTab(tab)}
               >
-                {section.actionLabel}
+                {tab === 'OVERVIEW' ? 'Overview' : tab === 'OPERATIONS' ? 'Operations' : 'Activity'}
               </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {activeTab === 'OVERVIEW' ? (
+        <>
+          <section className="container" style={{ marginBottom: '1rem' }}>
+            <div className="stats-grid">
+              <article className="glass-card" style={{ padding: '.85rem' }}>
+                <div style={{ color: 'var(--muted)', fontSize: '.82rem' }}>Total Quizzes</div>
+                <strong style={{ fontSize: '1.3rem' }}>{quizzes.length}</strong>
+              </article>
+              <article className="glass-card" style={{ padding: '.85rem' }}>
+                <div style={{ color: 'var(--muted)', fontSize: '.82rem' }}>Published Quizzes</div>
+                <strong style={{ fontSize: '1.3rem' }}>{publishedQuizCount}</strong>
+              </article>
+              <article className="glass-card" style={{ padding: '.85rem' }}>
+                <div style={{ color: 'var(--muted)', fontSize: '.82rem' }}>Classes</div>
+                <strong style={{ fontSize: '1.3rem' }}>{classes.length}</strong>
+              </article>
+              <article className="glass-card" style={{ padding: '.85rem' }}>
+                <div style={{ color: 'var(--muted)', fontSize: '.82rem' }}>Pending Invites</div>
+                <strong style={{ fontSize: '1.3rem' }}>{pendingInviteCount}</strong>
+              </article>
+            </div>
+          </section>
+
+          <section className="container">
+            <div className="feature-grid">
+              <article className="glass-card" style={{ padding: '1rem' }}>
+                <h3 style={{ marginTop: 0 }}>Quick Start</h3>
+                <div style={{ display: 'grid', gap: '.5rem', color: 'var(--muted)' }}>
+                  <p style={{ margin: 0 }}>1. Create or open quizzes in Quiz Studio.</p>
+                  <p style={{ margin: 0 }}>2. Organize classes and assign teachers/students.</p>
+                  <p style={{ margin: 0 }}>3. Track results and performance analytics.</p>
+                </div>
+                <div style={{ marginTop: '.7rem', display: 'flex', gap: '.5rem', flexWrap: 'wrap' }}>
+                  <Link href={`/dashboard/workspace/${membership.organization.id}/quizzes`} className="btn btn-primary">
+                    Go to Quizzes
+                  </Link>
+                  <Link href={`/dashboard/workspace/${membership.organization.id}/classes`} className="btn btn-ghost">
+                    Go to Classes
+                  </Link>
+                </div>
+              </article>
+
+              <article className="glass-card" style={{ padding: '1rem' }}>
+                <h3 style={{ marginTop: 0 }}>Tenant Snapshot</h3>
+                <p style={{ margin: 0, color: 'var(--muted)' }}>
+                  Workspace type: <strong style={{ color: 'var(--text)' }}>{formatOrgType(membership.organization.type)}</strong>
+                </p>
+                <p style={{ margin: '.35rem 0 0', color: 'var(--muted)' }}>
+                  Active role: <strong style={{ color: 'var(--text)' }}>{membership.role?.name ?? 'Member'}</strong>
+                </p>
+                <p style={{ margin: '.35rem 0 0', color: 'var(--muted)' }}>
+                  Operational status: <strong style={{ color: 'var(--text)' }}>{membership.organization.status}</strong>
+                </p>
+              </article>
+            </div>
+          </section>
+        </>
+      ) : null}
+
+      {activeTab === 'OPERATIONS' ? (
+        <section className="container">
+          <div className="feature-grid">
+            {sections.map((section) => (
+              <article key={section.title} className="glass-card" style={{ padding: '1rem' }}>
+                <h3 style={{ marginTop: 0 }}>{section.title}</h3>
+                <p style={{ color: 'var(--muted)', marginBottom: '.8rem' }}>{section.desc}</p>
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  onClick={() => router.push(`/dashboard/workspace/${membership.organization.id}/${section.route}`)}
+                >
+                  {section.actionLabel}
+                </button>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {activeTab === 'ACTIVITY' ? (
+        <section className="container">
+          <div className="feature-grid">
+            <article className="glass-card" style={{ padding: '1rem' }}>
+              <h3 style={{ marginTop: 0 }}>Latest Quizzes</h3>
+              {latestQuizzes.length === 0 ? (
+                <p style={{ color: 'var(--muted)', marginBottom: 0 }}>No quizzes yet.</p>
+              ) : (
+                <div style={{ display: 'grid', gap: '.45rem' }}>
+                  {latestQuizzes.map((quiz) => (
+                    <div key={quiz.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '.5rem' }}>
+                      <span>{quiz.title}</span>
+                      <span style={{ color: 'var(--muted)', fontSize: '.86rem' }}>{quiz.status}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </article>
-          ))}
-        </div>
-      </section>
 
-      <section className="container" style={{ marginTop: '1rem' }}>
-        <div className="feature-grid">
-          <article className="glass-card" style={{ padding: '1rem' }}>
-            <h3 style={{ marginTop: 0 }}>Latest Quizzes</h3>
-            {quizzes.length === 0 ? (
-              <p style={{ color: 'var(--muted)', marginBottom: 0 }}>No quizzes yet.</p>
-            ) : (
-              <div style={{ display: 'grid', gap: '.45rem' }}>
-                {quizzes.slice(0, 5).map((quiz) => (
-                  <div key={quiz.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '.5rem' }}>
-                    <span>{quiz.title}</span>
-                    <span style={{ color: 'var(--muted)', fontSize: '.86rem' }}>{quiz.status}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </article>
+            <article className="glass-card" style={{ padding: '1rem' }}>
+              <h3 style={{ marginTop: 0 }}>Latest Classes</h3>
+              {latestClasses.length === 0 ? (
+                <p style={{ color: 'var(--muted)', marginBottom: 0 }}>No classes yet.</p>
+              ) : (
+                <div style={{ display: 'grid', gap: '.45rem' }}>
+                  {latestClasses.map((classItem) => (
+                    <div key={classItem.id}>{classItem.name}</div>
+                  ))}
+                </div>
+              )}
+            </article>
 
-          <article className="glass-card" style={{ padding: '1rem' }}>
-            <h3 style={{ marginTop: 0 }}>Latest Classes</h3>
-            {classes.length === 0 ? (
-              <p style={{ color: 'var(--muted)', marginBottom: 0 }}>No classes yet.</p>
-            ) : (
-              <div style={{ display: 'grid', gap: '.45rem' }}>
-                {classes.slice(0, 5).map((classItem) => (
-                  <div key={classItem.id}>{classItem.name}</div>
-                ))}
-              </div>
-            )}
-          </article>
-
-          <article className="glass-card" style={{ padding: '1rem' }}>
-            <h3 style={{ marginTop: 0 }}>Recent Invitations</h3>
-            {invitations.length === 0 ? (
-              <p style={{ color: 'var(--muted)', marginBottom: 0 }}>No invitations yet.</p>
-            ) : (
-              <div style={{ display: 'grid', gap: '.45rem' }}>
-                {invitations.slice(0, 5).map((invite) => (
-                  <div key={invite.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '.5rem' }}>
-                    <span>{invite.email}</span>
-                    <span style={{ color: 'var(--muted)', fontSize: '.86rem' }}>{invite.status}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </article>
-        </div>
-      </section>
+            <article className="glass-card" style={{ padding: '1rem' }}>
+              <h3 style={{ marginTop: 0 }}>Recent Invitations</h3>
+              {latestInvitations.length === 0 ? (
+                <p style={{ color: 'var(--muted)', marginBottom: 0 }}>No invitations yet.</p>
+              ) : (
+                <div style={{ display: 'grid', gap: '.45rem' }}>
+                  {latestInvitations.map((invite) => (
+                    <div key={invite.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '.5rem' }}>
+                      <span>{invite.email}</span>
+                      <span style={{ color: 'var(--muted)', fontSize: '.86rem' }}>{invite.status}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </article>
+          </div>
+        </section>
+      ) : null}
     </main>
   );
 }

@@ -307,7 +307,10 @@ export class AttemptsService {
     });
   }
 
-  async submitPublicAttempt(input: { attemptId: string }) {
+  async submitPublicAttempt(input: {
+    attemptId: string;
+    predictor?: { leftScore: number; rightScore: number; leftTeamName?: string; rightTeamName?: string };
+  }) {
     const attempt = await this.prisma.quizAttempt.findUnique({
       where: { id: input.attemptId },
       include: {
@@ -335,18 +338,23 @@ export class AttemptsService {
     let earnedPoints = 0;
     const updates: Array<{ questionId: string; isCorrect: boolean | null; pointsAwarded: number }> = [];
 
-    for (const question of attempt.quiz.questions) {
-      totalPoints += question.points;
-      const payload = answersByQuestion.get(question.id);
-      const result = this.gradeQuestion(question.type, question.points, payload, question.answerOptions);
-      if (result.pointsAwarded > 0) {
-        earnedPoints += result.pointsAwarded;
+    if ((attempt.quiz.contentType ?? 'QUIZ') === 'PREDICTOR' || (attempt.quiz.contentType ?? 'QUIZ') === 'FORM') {
+      totalPoints = 1;
+      earnedPoints = 1;
+    } else {
+      for (const question of attempt.quiz.questions) {
+        totalPoints += question.points;
+        const payload = answersByQuestion.get(question.id);
+        const result = this.gradeQuestion(question.type, question.points, payload, question.answerOptions);
+        if (result.pointsAwarded > 0) {
+          earnedPoints += result.pointsAwarded;
+        }
+        updates.push({
+          questionId: question.id,
+          isCorrect: result.isCorrect,
+          pointsAwarded: result.pointsAwarded
+        });
       }
-      updates.push({
-        questionId: question.id,
-        isCorrect: result.isCorrect,
-        pointsAwarded: result.pointsAwarded
-      });
     }
 
     const percentage = totalPoints > 0 ? Number(((earnedPoints / totalPoints) * 100).toFixed(2)) : 0;
@@ -388,6 +396,32 @@ export class AttemptsService {
           passed
         }
       });
+
+      if ((attempt.quiz.contentType ?? 'QUIZ') === 'PREDICTOR' && input.predictor) {
+        const predictorPayload = {
+          predictor: {
+            leftScore: Math.round(input.predictor.leftScore),
+            rightScore: Math.round(input.predictor.rightScore),
+            leftTeamName: input.predictor.leftTeamName?.trim() || null,
+            rightTeamName: input.predictor.rightTeamName?.trim() || null
+          }
+        } as Prisma.InputJsonValue;
+
+        await tx.leadSubmission.upsert({
+          where: {
+            attemptId: attempt.id
+          },
+          update: {
+            payload: predictorPayload
+          },
+          create: {
+            organizationId: attempt.organizationId,
+            quizId: attempt.quizId,
+            attemptId: attempt.id,
+            payload: predictorPayload
+          }
+        });
+      }
     });
 
     return this.getPublicResult({ attemptId: attempt.id });
@@ -501,6 +535,10 @@ export class AttemptsService {
       title: quiz.title,
       description: quiz.description,
       passScore: quiz.passScore,
+      contentType: quiz.contentType ?? 'QUIZ',
+      theme: this.toQuizTheme(quiz.themeConfig),
+      startScreenConfig: this.toStartScreenConfig(quiz.themeConfig, quiz.title, quiz.description),
+      predictorConfig: this.toPredictorConfig(quiz.themeConfig),
       questionFlowMode: quiz.questionFlowMode === 'ALL_AT_ONCE' ? 'ALL_AT_ONCE' : 'STEP_BY_STEP',
       showAnswerFeedback: quiz.showAnswerFeedback,
       publicAccessMode: quiz.publicAccessMode ?? 'PUBLIC_LINK',
@@ -547,6 +585,117 @@ export class AttemptsService {
     };
   }
 
+  async getPublicAssignmentRequestContext(input: { token: string }) {
+    const token = input.token.trim();
+    if (!token) {
+      throw new BadRequestException('Assignment token is required');
+    }
+
+    const assignment = await this.prisma.quizAssignment.findFirst({
+      where: {
+        requestAccessToken: token,
+        scopeType: AssignmentScopeType.REQUEST_LINK
+      },
+      include: {
+        quiz: {
+          select: {
+            id: true,
+            title: true,
+            description: true,
+            status: true
+          }
+        },
+        organization: {
+          select: {
+            id: true,
+            name: true
+          }
+        }
+      }
+    });
+    if (!assignment || assignment.quiz.status !== QuizStatus.PUBLISHED) {
+      throw new NotFoundException('Assignment request link not found');
+    }
+
+    return {
+      assignmentId: assignment.id,
+      quiz: assignment.quiz,
+      organization: assignment.organization,
+      availability: {
+        startAt: assignment.startAt,
+        endAt: assignment.endAt,
+        attemptLimit: assignment.attemptLimit
+      }
+    };
+  }
+
+  async submitPublicAssignmentRequest(input: { token: string; name: string; email: string }) {
+    const token = input.token.trim();
+    if (!token) {
+      throw new BadRequestException('Assignment token is required');
+    }
+    const name = input.name.trim();
+    const email = input.email.trim().toLowerCase();
+    if (!name || !email) {
+      throw new BadRequestException('Name and email are required');
+    }
+
+    const assignment = await this.prisma.quizAssignment.findFirst({
+      where: {
+        requestAccessToken: token,
+        scopeType: AssignmentScopeType.REQUEST_LINK
+      },
+      include: {
+        quiz: {
+          select: {
+            status: true
+          }
+        }
+      }
+    });
+    if (!assignment || assignment.quiz.status !== QuizStatus.PUBLISHED) {
+      throw new NotFoundException('Assignment request link not found');
+    }
+
+    const existing = await this.prisma.assignmentAccessRequest.findFirst({
+      where: {
+        assignmentId: assignment.id,
+        email
+      },
+      orderBy: {
+        requestedAt: 'desc'
+      }
+    });
+    if (existing && existing.status === 'PENDING') {
+      return {
+        status: 'PENDING',
+        message: 'Your request is already pending approval.'
+      };
+    }
+    if (existing && existing.status === 'APPROVED') {
+      return {
+        status: 'APPROVED',
+        message: 'Your access request is already approved.'
+      };
+    }
+
+    await this.prisma.assignmentAccessRequest.create({
+      data: {
+        organizationId: assignment.organizationId,
+        quizId: assignment.quizId,
+        assignmentId: assignment.id,
+        name,
+        email,
+        status: 'PENDING'
+      }
+    });
+
+    return {
+      status: 'PENDING',
+      message: 'Request submitted. Wait for teacher/admin approval.'
+    };
+  }
+
   async submitPublicEndForm(input: { attemptId: string; values: Record<string, unknown> }) {
     const attempt = await this.prisma.quizAttempt.findUnique({
       where: { id: input.attemptId },
@@ -555,7 +704,8 @@ export class AttemptsService {
           select: {
             id: true,
             organizationId: true,
-            endFormEnabled: true
+            endFormEnabled: true,
+            endFormFields: true
           }
         }
       }
@@ -571,6 +721,11 @@ export class AttemptsService {
     }
 
     const values = input.values ?? {};
+    const configuredFields = Array.isArray(attempt.quiz.endFormFields)
+      ? (attempt.quiz.endFormFields as Array<Record<string, unknown>>)
+      : [];
+    this.validatePublicEndFormValues(configuredFields, values);
+
     const name = typeof values.name === 'string' ? values.name : null;
     const email = typeof values.email === 'string' ? values.email : null;
     const phone = typeof values.phone === 'string' ? values.phone : null;
@@ -600,6 +755,59 @@ export class AttemptsService {
       id: saved.id,
       createdAt: saved.createdAt
     };
+  }
+
+  private validatePublicEndFormValues(
+    fields: Array<Record<string, unknown>>,
+    values: Record<string, unknown>
+  ): void {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const phoneRegex = /^\+?[0-9\s\-()]{7,20}$/;
+
+    for (const field of fields) {
+      const key = typeof field.key === 'string' ? field.key : '';
+      const type = typeof field.type === 'string' ? field.type.toLowerCase() : 'text';
+      const required = Boolean(field.required);
+      const value = values[key];
+
+      const asString = typeof value === 'string' ? value.trim() : '';
+      const asArray = Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+
+      if (required) {
+        const missing = type === 'checkbox' ? asArray.length === 0 : asString.length === 0;
+        if (missing) {
+          throw new BadRequestException(`${key} is required`);
+        }
+      }
+
+      if (!required && (value === undefined || value === null || asString.length === 0) && asArray.length === 0) {
+        continue;
+      }
+
+      if (type === 'email' && asString && !emailRegex.test(asString)) {
+        throw new BadRequestException(`Invalid email for ${key}`);
+      }
+      if (type === 'phone' && asString && !phoneRegex.test(asString)) {
+        throw new BadRequestException(`Invalid phone for ${key}`);
+      }
+      if (type === 'url' && asString) {
+        try {
+          // eslint-disable-next-line no-new
+          new URL(asString);
+        } catch {
+          throw new BadRequestException(`Invalid URL for ${key}`);
+        }
+      }
+      if (type === 'number' && asString && Number.isNaN(Number(asString))) {
+        throw new BadRequestException(`Invalid number for ${key}`);
+      }
+      if (type === 'rating' && asString) {
+        const rating = Number(asString);
+        if (Number.isNaN(rating) || rating < 1 || rating > 5) {
+          throw new BadRequestException(`Rating for ${key} must be between 1 and 5`);
+        }
+      }
+    }
   }
 
   private gradeQuestion(
@@ -712,5 +920,82 @@ export class AttemptsService {
     }
 
     return membership;
+  }
+
+  private toQuizTheme(themeConfig: unknown) {
+    const raw = themeConfig && typeof themeConfig === 'object' ? (themeConfig as Record<string, unknown>) : {};
+    const get = (key: string, fallback: string) => (typeof raw[key] === 'string' && raw[key] ? String(raw[key]) : fallback);
+    return {
+      backgroundColor: get('backgroundColor', '#f3f6ff'),
+      backgroundGradient: get('backgroundGradient', 'linear-gradient(135deg, #f3f6ff 0%, #eef8ff 50%, #f9f4ff 100%)'),
+      cardColor: get('cardColor', '#ffffff'),
+      textColor: get('textColor', '#0f172a'),
+      mutedTextColor: get('mutedTextColor', '#475569'),
+      primaryColor: get('primaryColor', '#0f766e'),
+      primaryTextColor: get('primaryTextColor', '#ffffff'),
+      correctColor: get('correctColor', '#16a34a'),
+      wrongColor: get('wrongColor', '#dc2626'),
+      fontFamily: get('fontFamily', '"Avenir Next", "Segoe UI", sans-serif')
+    };
+  }
+
+  private toPredictorConfig(themeConfig: unknown) {
+    const raw = themeConfig && typeof themeConfig === 'object' ? (themeConfig as Record<string, unknown>) : {};
+    const source =
+      raw.predictorConfig && typeof raw.predictorConfig === 'object'
+        ? (raw.predictorConfig as Record<string, unknown>)
+        : {};
+
+    const getString = (key: string, fallback: string) =>
+      typeof source[key] === 'string' && String(source[key]).trim().length > 0 ? String(source[key]).trim() : fallback;
+    const getInt = (key: string, fallback: number) => {
+      const value = source[key];
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return Math.round(value);
+      }
+      if (typeof value === 'string' && value.trim() && !Number.isNaN(Number(value))) {
+        return Math.round(Number(value));
+      }
+      return fallback;
+    };
+
+    const minScore = Math.min(getInt('minScore', 0), getInt('maxScore', 10));
+    const maxScore = Math.max(getInt('minScore', 0), getInt('maxScore', 10));
+    const clamp = (value: number) => Math.max(minScore, Math.min(maxScore, value));
+
+    return {
+      badgeText: getString('badgeText', 'GUESS THE SCORE'),
+      titleText: getString('titleText', 'Predictor'),
+      leftTeamName: getString('leftTeamName', 'Team 1'),
+      rightTeamName: getString('rightTeamName', 'Team 2'),
+      leftTeamLogoUrl: getString('leftTeamLogoUrl', ''),
+      rightTeamLogoUrl: getString('rightTeamLogoUrl', ''),
+      minScore,
+      maxScore,
+      step: Math.max(1, getInt('step', 1)),
+      leftScore: clamp(getInt('leftScore', 0)),
+      rightScore: clamp(getInt('rightScore', 0))
+    };
+  }
+
+  private toStartScreenConfig(themeConfig: unknown, quizTitle: string, quizDescription: string | null) {
+    const raw = themeConfig && typeof themeConfig === 'object' ? (themeConfig as Record<string, unknown>) : {};
+    const source =
+      raw.startScreenConfig && typeof raw.startScreenConfig === 'object'
+        ? (raw.startScreenConfig as Record<string, unknown>)
+        : {};
+    const getString = (key: string, fallback: string) =>
+      typeof source[key] === 'string' && String(source[key]).trim().length > 0 ? String(source[key]).trim() : fallback;
+
+    return {
+      enabled: typeof source.enabled === 'boolean' ? source.enabled : false,
+      mode: source.mode === 'CUSTOM' ? 'CUSTOM' : 'DEFAULT',
+      showGlassCard: typeof source.showGlassCard === 'boolean' ? source.showGlassCard : false,
+      title: getString('title', quizTitle),
+      description: getString('description', quizDescription ?? 'Start when you are ready.'),
+      buttonLabel: getString('buttonLabel', 'Start Quiz'),
+      introHtml: getString('introHtml', ''),
+      coverImageUrl: getString('coverImageUrl', '')
+    };
   }
 }
